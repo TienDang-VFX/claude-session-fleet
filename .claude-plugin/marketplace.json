@@ -1,0 +1,5 @@
+{
+  "name": "session-fleet-local",
+  "owner": { "name": "TienDang-VFX" },
+  "plugins": [{ "name": "session-fleet", "source": "./" }]
+}

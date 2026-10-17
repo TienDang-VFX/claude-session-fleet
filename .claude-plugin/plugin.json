@@ -1,0 +1,8 @@
+{
+  "name": "session-fleet",
+  "version": "0.1.0",
+  "author": {
+    "name": "TienDang-VFX"
+  },
+  "description": "Names each session after its machine, keeps it in the machine's project folder, checks Remote Control, and syncs a session registry across machines. Per-machine settings: ~/.claude/session-fleet.json."
+}
