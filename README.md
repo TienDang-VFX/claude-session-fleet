@@ -26,7 +26,7 @@ Cài plugin session-fleet cho máy này.
 ```
 
 Script sẽ làm mấy việc sau:
-- Đặt tên máy theo GPU (RTX 3090 thành `3090`). Không có GPU rời thì lấy tên máy tính (Windows) hoặc hostname (macOS/Linux). Muốn tự đặt thì dùng `-Machine` / `--machine`.
+- Đặt tên máy theo GPU (RTX 3090 thành `3090`). Không có GPU rời thì lấy tên máy tính (Windows) hoặc hostname (macOS/Linux). Muốn tự đặt thì dùng `-Machine` / `--machine`. Nhóm sidebar mặc định trùng tên máy; muốn dùng nhóm khác (ví dụ nhóm `Ty` có sẵn) thì dùng `-SidebarGroup Ty` / `--group Ty`, hoặc sửa `sidebarGroup` trong `~/.claude/session-fleet.json`.
 - Tìm folder chứa file đánh dấu: trên Windows quét tối đa 2 cấp dưới gốc mỗi ổ cứng cục bộ; trên macOS quét `~` và `/Volumes`. Nếu có nhiều bản, ưu tiên bản là git clone đầy đủ, sau đó tới bản sửa gần nhất. Muốn chỉ định thì dùng `-ProjectRoot` / `--root`.
 - Clone registry `TienDang-VFX/claude-session-registry` vào `~/.claude/session-fleet-registry`.
 - Ghi file `~/.claude/session-fleet.json` (cấu hình riêng của máy).

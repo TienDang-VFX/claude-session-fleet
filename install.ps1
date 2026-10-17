@@ -7,6 +7,7 @@ param(
     [string]$Machine = "",
     [string]$ProjectRoot = "",
     [string]$ProjectMarker = "",
+    [string]$SidebarGroup = "",
     [string]$RegistryDir = "",
     [string]$RegistryGit = "https://github.com/TienDang-VFX/claude-session-registry.git",
     [switch]$NoEnforce
@@ -60,6 +61,7 @@ if ($RegistryGit) {
 
 $config = [ordered]@{
     machineName   = $Machine
+    sidebarGroup  = $(if ($SidebarGroup) { $SidebarGroup } else { $Machine })
     projectRoot   = $ProjectRoot
     registryDir   = $RegistryDir
     enforceFolder = -not $NoEnforce
