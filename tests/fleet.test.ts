@@ -127,7 +127,7 @@ test('after a turn, the plugin renames the session and files it under its machin
   on('tool.call', ($, e) => {
     const call = e as unknown as { tool: string; [k: string]: unknown }
     calls.push(call)
-    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return reply('{"title":"Recreate VFX Gymboard Niagara","group":null}')
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return reply('{"title":"Recreate VFX Gymboard Niagara","group":null,"remoteControlState":"on"}')
     if (call.tool === 'mcp__ccd_sidebar__list_groups') return reply('[{"id":"cg-1","name":"Done"}]')
     if (call.tool === 'mcp__ccd_sidebar__create_group') return reply('Created group "3090" with id cg-2a.')
     return reply('ok')
@@ -143,4 +143,6 @@ test('after a turn, the plugin renames the session and files it under its machin
   const rename = calls.find(c => c.tool === 'mcp__ccd_session_mgmt__set_session_title')
   expect(rename).toMatchObject({ session_id: 'self', title: '[3090] Recreate VFX Gymboard Niagara' })
   expect(calls.find(c => c.tool === 'mcp__ccd_sidebar__move_sessions')).toMatchObject({ group_id: 'cg-2a' })
+  const remote = calls.filter(c => c.tool === 'mcp__ccd_session_mgmt__set_remote_control').map(c => c.enabled)
+  expect(remote).toEqual([false, true])
 })

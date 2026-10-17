@@ -292,6 +292,7 @@ const APP = {
   create: 'mcp__ccd_sidebar__create_group',
   move: 'mcp__ccd_sidebar__move_sessions',
   completed: 'mcp__ccd_sidebar__mark_completed',
+  remote: 'mcp__ccd_session_mgmt__set_remote_control',
 } as const
 
 /** Calls one of the desktop app's tools; the answer's text, or undefined when it is missing or refused. */
@@ -325,7 +326,7 @@ async function syncApp($: $, cfg: Config) {
     const rec = await loadRecord($, cfg, await $.session.id())
     if (!rec) return
     const info = parseJson(await callApp($, APP.get, { session_id: 'self' })) as
-      | { title?: string; group?: { id: string; name: string } | null }
+      | { title?: string; group?: { id: string; name: string } | null; remoteControlState?: string }
       | undefined
     if (!info || typeof info !== 'object') {
       await $.store.set(APP_SYNC_KEY, 'missing')
@@ -344,7 +345,13 @@ async function syncApp($: $, cfg: Config) {
       }
     }
     const title = titleOf(rec)
-    if (current !== title) await callApp($, APP.title, { session_id: 'self', title })
+    if (current !== title && (await callApp($, APP.title, { session_id: 'self', title })) !== undefined) {
+      // Other devices read the title when Remote Control connects: reconnect so they see the new one.
+      if (info.remoteControlState === 'on') {
+        await callApp($, APP.remote, { session_id: 'self', enabled: false })
+        await callApp($, APP.remote, { session_id: 'self', enabled: true })
+      }
+    }
 
     const want = rec.status === 'done' ? 'Done' : cfg.machine
     if (info.group?.name !== want) {
