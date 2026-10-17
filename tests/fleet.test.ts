@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { formatTable, isInside, joinPath, titleOf, type FleetRecord } from '../hooks/fleet'
+import { featureFromTitle, formatTable, isInside, joinPath, titleOf, type FleetRecord } from '../hooks/fleet'
 
 const rec = (over: Partial<FleetRecord> = {}): FleetRecord => ({
   machine: '3090',
@@ -26,6 +26,16 @@ describe('helpers', () => {
     expect(isInside('D:\\Work\\game', 'D:\\Work\\game\\')).toBe(true)
     expect(isInside('D:\\Work\\game-other', 'D:\\Work\\game')).toBe(false)
     expect(isInside('E:\\Work\\game', 'D:\\Work\\game')).toBe(false)
+  })
+
+  test('an existing title keeps its words under the machine prefix', () => {
+    expect(featureFromTitle('5080 Cutscene lighting', '5080')).toBe('Cutscene lighting')
+    expect(featureFromTitle('[5080] ✅ Cutscene lighting', '5080')).toBe('Cutscene lighting')
+    expect(featureFromTitle('5080: Lighting loc3', '5080')).toBe('Lighting loc3')
+    expect(featureFromTitle('Autumn render handoff', '5080')).toBe('Autumn render handoff')
+    expect(featureFromTitle('50801 benchmark', '5080')).toBe('50801 benchmark')
+    expect(featureFromTitle('[5080] new session', '5080')).toBe('')
+    expect(featureFromTitle(undefined, '5080')).toBe('')
   })
 
   test('paths join with forward slashes', () => {

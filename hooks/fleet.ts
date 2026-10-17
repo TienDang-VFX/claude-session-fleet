@@ -15,7 +15,7 @@ export type FleetRecord = {
 export const FIRST_PROMPT_MARK = 'session-fleet:'
 
 export const titleOf = (rec: FleetRecord) =>
-  `[${rec.machine}] ${rec.status === 'done' ? '✅ ' : ''}${rec.feature || 'new session'}`
+  `[${rec.machine}] ${rec.status === 'done' ? '✅ ' : ''}${rec.feature || DEFAULT_FEATURE}`
 
 export const joinPath = (...parts: string[]) =>
   parts
@@ -30,6 +30,24 @@ export const isInside = (path: string, root: string) => {
   const p = norm(path)
   const r = norm(root)
   return p === r || p.startsWith(r + '/')
+}
+
+const DEFAULT_FEATURE = 'new session'
+
+/**
+ * The feature a session title already names, without the machine prefix
+ * ("5080 Cutscene lighting", "[5080] ✅ Cutscene lighting" -> "Cutscene lighting");
+ * empty for no title or the plugin's own placeholder.
+ */
+export function featureFromTitle(title: string | undefined, machine: string): string {
+  if (!title) return ''
+  const m = machine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const bare = title
+    .trim()
+    .replace(new RegExp(`^(\\[${m}\\]|${m})(\\s*[-:|·]\\s*|\\s+)`, 'i'), '')
+    .replace(/^✅\s*/, '')
+    .trim()
+  return bare === DEFAULT_FEATURE ? '' : bare.slice(0, 60)
 }
 
 /** The first words of a prompt, as a fallback feature name. */
