@@ -5,6 +5,7 @@ import {
   FIRST_PROMPT_MARK,
   featureFromText,
   featureFromTitle,
+  isDoneTitle,
   formatTable,
   isInside,
   joinPath,
@@ -173,7 +174,10 @@ export const register: Register = (on, options) => {
       updatedAt: now,
     }
     rec.cwd = e.cwd
-    if (!rec.feature) rec.feature = featureFromTitle(e.session_title, cfg.machine)
+    if (!rec.feature) {
+      rec.feature = featureFromTitle(e.session_title, cfg.machine)
+      if (rec.feature && isDoneTitle(e.session_title)) rec.status = 'done'
+    }
     await saveRecord($, cfg, rec)
 
     const lines = [
@@ -207,8 +211,10 @@ export const register: Register = (on, options) => {
     if (!rec.feature) {
       // A session that already has a title keeps it, under the machine prefix.
       const named = featureFromTitle(e.session_title, cfg.machine)
-      if (named) rec.feature = named
-      else if (isPersonsPrompt && !e.prompt.trimStart().startsWith('/')) rec.feature = await nameFeature($, e.prompt)
+      if (named) {
+        rec.feature = named
+        if (isDoneTitle(e.session_title)) rec.status = 'done'
+      } else if (isPersonsPrompt && !e.prompt.trimStart().startsWith('/')) rec.feature = await nameFeature($, e.prompt)
       if (rec.feature) await saveRecord($, cfg, rec)
     }
     const title = titleOf(rec)

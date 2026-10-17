@@ -50,6 +50,9 @@ export function featureFromTitle(title: string | undefined, machine: string): st
   return bare === DEFAULT_FEATURE ? '' : bare.slice(0, 60)
 }
 
+/** Whether a title marks its session done (a ✅ anywhere in it). */
+export const isDoneTitle = (title: string | undefined) => (title ?? '').includes('✅')
+
 /** The first words of a prompt, as a fallback feature name. */
 export const featureFromText = (text: string) =>
   text.replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ') || 'untitled'

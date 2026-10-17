@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { featureFromTitle, formatTable, isInside, joinPath, titleOf, type FleetRecord } from '../hooks/fleet'
+import { featureFromTitle, formatTable, isDoneTitle, isInside, joinPath, titleOf, type FleetRecord } from '../hooks/fleet'
 
 const rec = (over: Partial<FleetRecord> = {}): FleetRecord => ({
   machine: '3090',
@@ -36,6 +36,8 @@ describe('helpers', () => {
     expect(featureFromTitle('50801 benchmark', '5080')).toBe('50801 benchmark')
     expect(featureFromTitle('[5080] new session', '5080')).toBe('')
     expect(featureFromTitle(undefined, '5080')).toBe('')
+    expect(isDoneTitle('[3090] ✅ #33064 Fix tests')).toBe(true)
+    expect(isDoneTitle('[3090] Đuôi cáo')).toBe(false)
   })
 
   test('paths join with forward slashes', () => {
