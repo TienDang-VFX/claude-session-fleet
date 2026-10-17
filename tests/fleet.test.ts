@@ -60,7 +60,7 @@ function fakeHost(on: On, files: Map<string, string>, cwd: string) {
   mock.store(on)
   mock.env(on, { USERPROFILE: 'C:/home' })
   files.set('C:/home/.claude/session-fleet.json', JSON.stringify(CONFIG))
-  mock.clock(on, { now: Date.parse('2026-10-17T00:00:00.000Z') })
+  const clock = mock.clock(on, { now: Date.parse('2026-10-17T00:00:00.000Z') })
   on('fs.write', ($, e) => {
     files.set(slash(e.path), e.text)
     return { value: undefined }
@@ -80,6 +80,7 @@ function fakeHost(on: On, files: Map<string, string>, cwd: string) {
   on('ui.status', () => ({ value: undefined }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
   on('tool.register', () => ({ value: { tool: '' } }) as never)
+  return clock
 }
 
 const CONFIG = { machineName: '3090', projectRoot: 'D:\\Work\\game', registryDir: 'R:/reg', enforceFolder: true }
@@ -116,4 +117,30 @@ test('the fleet_done tool marks the session done and asks for the new title', as
   expect(JSON.stringify(ran)).toContain('[3090] ✅ new session')
   const saved = JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}') as FleetRecord
   expect(saved).toMatchObject({ status: 'done', note: 'shipped' })
+})
+
+test('after a turn, the plugin renames the session and files it under its machine through the app', async ($, on) => {
+  const files = new Map<string, string>()
+  const clock = fakeHost(on, files, 'D:\\Work\\game')
+  const calls: { tool: string; [k: string]: unknown }[] = []
+  const reply = (text: string) => ({ result: text, text })
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string; [k: string]: unknown }
+    calls.push(call)
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return reply('{"title":"Recreate VFX Gymboard Niagara","group":null}')
+    if (call.tool === 'mcp__ccd_sidebar__list_groups') return reply('[{"id":"cg-1","name":"Done"}]')
+    if (call.tool === 'mcp__ccd_sidebar__create_group') return reply('Created group "3090" with id cg-2a.')
+    return reply('ok')
+  })
+  on('classic.SessionStart', () => ({}))
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: 'D:\\Work\\game', surface: 'desktop', isInteractive: true })
+  await $.classic.SessionStart({ source: 'startup', session_id: 'sess-1', cwd: 'D:\\Work\\game' })
+
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.settle()
+
+  const rename = calls.find(c => c.tool === 'mcp__ccd_session_mgmt__set_session_title')
+  expect(rename).toMatchObject({ session_id: 'self', title: '[3090] Recreate VFX Gymboard Niagara' })
+  expect(calls.find(c => c.tool === 'mcp__ccd_sidebar__move_sessions')).toMatchObject({ group_id: 'cg-2a' })
 })

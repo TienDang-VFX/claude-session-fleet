@@ -188,8 +188,12 @@ export const register: Register = (on, options) => {
           : `Folder: ${e.cwd} is inside this machine's project folder ${cfg.root}.`
         : 'Folder: no project folder is configured for this machine.',
       await remoteControlNote($),
-      `If mcp__ccd_sidebar tools are available, file this session under the sidebar group "${cfg.machine}" (create it if missing) once, without asking.`,
-      renameAsk(titleOf(rec)),
+      ...((await $.store.get(APP_SYNC_KEY)) === 'works'
+        ? []
+        : [
+            `If mcp__ccd_sidebar tools are available, file this session under the sidebar group "${rec.status === 'done' ? 'Done' : cfg.machine}" (create it if missing) once, without asking.`,
+            renameAsk(titleOf(rec)),
+          ]),
       'When the user says the work is finished (done / xong / hoàn thành), call mcp__session-fleet__fleet_done. ' +
         'When the user names the feature, call mcp__session-fleet__fleet_feature. For sessions on other machines, call mcp__session-fleet__fleet_sessions.',
     ]
@@ -220,13 +224,22 @@ export const register: Register = (on, options) => {
     const title = titleOf(rec)
     if (e.session_title === title) return result
     const askedKey = `asked:${e.session_id}`
-    const isAsked = (await $.store.get(askedKey)) === title
+    const isAsked = (await $.store.get(askedKey)) === title || (await $.store.get(APP_SYNC_KEY)) === 'works'
     if (!isAsked) await $.store.set(askedKey, title)
     return {
       ...result,
       sessionTitle: title,
       ...(isAsked ? {} : { additionalContext: [...(result.additionalContext ?? []), renameAsk(title)] }),
     }
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId && config) {
+      const cfg = config
+      $.clock.after(0, () => void syncApp($, cfg))
+    }
+    return result
   })
 
   on('tool.call', ($, e, next) =>
@@ -269,6 +282,88 @@ export const register: Register = (on, options) => {
 
 const NOT_READY = 'session-fleet is not loaded yet.'
 
+/** Whether the desktop app's own session and sidebar tools answer the plugin on this machine. */
+const APP_SYNC_KEY = 'appSync'
+
+const APP = {
+  get: 'mcp__ccd_session_mgmt__get_session',
+  title: 'mcp__ccd_session_mgmt__set_session_title',
+  groups: 'mcp__ccd_sidebar__list_groups',
+  create: 'mcp__ccd_sidebar__create_group',
+  move: 'mcp__ccd_sidebar__move_sessions',
+  completed: 'mcp__ccd_sidebar__mark_completed',
+} as const
+
+/** Calls one of the desktop app's tools; the answer's text, or undefined when it is missing or refused. */
+async function callApp($: $, tool: string, args: Record<string, unknown>): Promise<string | undefined> {
+  const ran = await $.tool.call({ tool, ...args } as never).catch(() => undefined)
+  if (!ran || ran.deny !== undefined || ran.isError) return undefined
+  if (typeof ran.text === 'string') return ran.text
+  return typeof ran.result === 'string' ? ran.result : JSON.stringify(ran.result)
+}
+
+const parseJson = (text: string | undefined): unknown => {
+  try {
+    return text === undefined ? undefined : JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+let isSyncing = false
+
+/**
+ * Brings the desktop app in line with the record: the title "[machine] feature",
+ * the sidebar group (the machine's, or Done), completed once done. A title the
+ * app or the person gave without the prefix becomes the feature, unless the
+ * feature was named with /feature or fleet_feature.
+ */
+async function syncApp($: $, cfg: Config) {
+  if (isSyncing) return
+  isSyncing = true
+  try {
+    const rec = await loadRecord($, cfg, await $.session.id())
+    if (!rec) return
+    const info = parseJson(await callApp($, APP.get, { session_id: 'self' })) as
+      | { title?: string; group?: { id: string; name: string } | null }
+      | undefined
+    if (!info || typeof info !== 'object') {
+      await $.store.set(APP_SYNC_KEY, 'missing')
+      return
+    }
+    await $.store.set(APP_SYNC_KEY, 'works')
+
+    const current = info.title ?? ''
+    const isPrefixed = current.startsWith(`[${cfg.machine}]`)
+    if (!isPrefixed && rec.featureSource !== 'user') {
+      const named = featureFromTitle(current, cfg.machine)
+      if (named && named !== rec.feature) {
+        rec.feature = named
+        if (isDoneTitle(current)) rec.status = 'done'
+        await saveRecord($, cfg, rec)
+      }
+    }
+    const title = titleOf(rec)
+    if (current !== title) await callApp($, APP.title, { session_id: 'self', title })
+
+    const want = rec.status === 'done' ? 'Done' : cfg.machine
+    if (info.group?.name !== want) {
+      const groups = (parseJson(await callApp($, APP.groups, {})) as { id: string; name: string }[] | undefined) ?? []
+      let id = groups.find(g => g.name === want)?.id
+      if (!id) id = (await callApp($, APP.create, { name: want }))?.match(/cg-[0-9a-f-]+/)?.[0]
+      if (id) await callApp($, APP.move, { session_ids: ['self'], group_id: id })
+    }
+    if (rec.status === 'done' && !rec.isMarkedCompleted) {
+      if ((await callApp($, APP.completed, { session_id: 'self' })) !== undefined) {
+        rec.isMarkedCompleted = true
+        await saveRecord($, cfg, rec, { sync: false })
+      }
+    }
+  } finally {
+    isSyncing = false
+  }
+}
+
 const answer = (text: string) => ({ result: text, text })
 
 /** One argument of a call to the plugin's own tool, wherever the envelope carries it. */
@@ -310,7 +405,9 @@ async function setFeature($: $, cfg: Config, raw: string): Promise<string> {
   if (!name) return 'Give a feature name.'
   const rec = await currentRecord($, cfg)
   rec.feature = name.slice(0, 60)
+  rec.featureSource = 'user'
   await saveRecord($, cfg, rec)
+  $.clock.after(0, () => void syncApp($, cfg))
   return `Feature set: ${titleOf(rec)}. ${renameAsk(titleOf(rec))}`
 }
 
@@ -320,6 +417,7 @@ async function markDone($: $, cfg: Config, note: string): Promise<string> {
   rec.doneAt = new Date(await $.clock.now()).toISOString()
   if (note.trim()) rec.note = note.trim().slice(0, 300)
   await saveRecord($, cfg, rec)
+  $.clock.after(0, () => void syncApp($, cfg))
   return (
     `Marked done and synced: ${titleOf(rec)}. ${renameAsk(titleOf(rec))} ` +
     'If mcp__ccd_sidebar tools are available, also mark this session completed and move it into the sidebar group "Done" (create it if missing).'

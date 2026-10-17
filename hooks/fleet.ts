@@ -9,6 +9,10 @@ export type FleetRecord = {
   updatedAt: string
   doneAt?: string
   note?: string
+  /** 'user' once named with /feature or fleet_feature: the app's title then no longer renames it. */
+  featureSource?: 'auto' | 'user'
+  /** Set once the desktop app's sidebar shows the done session as completed. */
+  isMarkedCompleted?: boolean
 }
 
 /** Leads the prompts the plugin submits itself, so they never name a feature. */
@@ -47,7 +51,7 @@ export function featureFromTitle(title: string | undefined, machine: string): st
     .replace(new RegExp(`^(\\[${m}\\]|${m})(\\s*[-:|·]\\s*|\\s+)`, 'i'), '')
     .replace(/^✅\s*/, '')
     .trim()
-  return bare === DEFAULT_FEATURE ? '' : bare.slice(0, 60)
+  return bare.toLowerCase() === DEFAULT_FEATURE ? '' : bare.slice(0, 60)
 }
 
 /** Whether a title marks its session done (a ✅ anywhere in it). */
