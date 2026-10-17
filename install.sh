@@ -4,12 +4,11 @@
 #   ./install.sh --machine macmini --root ~/work/mygame
 #   ./install.sh --marker MyGame.uproject --registry-git ""   (registry: this machine only)
 set -euo pipefail
-machine=""; group=""; root=""; marker=""; registry=""
+machine=""; root=""; marker=""; registry=""
 registry_git="https://github.com/TienDang-VFX/claude-session-registry.git"
 while [ $# -gt 0 ]; do
   case "$1" in
     --machine) machine="$2"; shift 2 ;;
-    --group) group="$2"; shift 2 ;;
     --root) root="$2"; shift 2 ;;
     --marker) marker="$2"; shift 2 ;;
     --registry-dir) registry="$2"; shift 2 ;;
@@ -48,7 +47,6 @@ fi
 cat > "$claude_dir/session-fleet.json" <<EOF
 {
   "machineName": "$machine",
-  "sidebarGroup": "${group:-$machine}",
   "projectRoot": "$root",
   "registryDir": "$registry",
   "enforceFolder": true

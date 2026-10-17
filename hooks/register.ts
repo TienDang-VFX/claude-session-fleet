@@ -17,8 +17,7 @@ type $ = EngineInterface
 /** Tools that change files or run commands: denied outside the project folder. */
 const GUARDED = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit', 'Bash', 'PowerShell'])
 
-/** `group`: the sidebar group this machine's sessions go in (sidebarGroup, else the machine name). */
-type Config = { machine: string; group: string; root: string; registry: string; enforce: boolean }
+type Config = { machine: string; root: string; registry: string; enforce: boolean }
 
 /** Module state; recomputed by session.start on every load or reload. */
 let config: Config | undefined
@@ -55,7 +54,6 @@ async function readConfig($: $, pluginOptions: PluginOptions): Promise<Config> {
   if (!registry) registry = joinPath(home, '.claude', 'session-fleet-registry')
   return {
     machine: machine || 'unknown',
-    group: str(options, 'sidebarGroup') || machine || 'unknown',
     root: str(options, 'projectRoot'),
     registry,
     enforce: options.enforceFolder !== false,
@@ -193,7 +191,7 @@ export const register: Register = (on, options) => {
       ...((await $.store.get(APP_SYNC_KEY)) === 'works'
         ? []
         : [
-            `If mcp__ccd_sidebar tools are available, file this session under the sidebar group "${rec.status === 'done' ? 'Done' : cfg.group}" (create it if missing) once, without asking.`,
+            `If mcp__ccd_sidebar tools are available, file this session under the sidebar group "${rec.status === 'done' ? 'Done' : cfg.machine}" (create it if missing) once, without asking.`,
             renameAsk(titleOf(rec)),
           ]),
       'When the user says the work is finished (done / xong / hoàn thành), call mcp__session-fleet__fleet_done. ' +
@@ -355,7 +353,7 @@ async function syncApp($: $, cfg: Config) {
       }
     }
 
-    const want = rec.status === 'done' ? 'Done' : cfg.group
+    const want = rec.status === 'done' ? 'Done' : cfg.machine
     if (info.group?.name !== want) {
       const groups = (parseJson(await callApp($, APP.groups, {})) as { id: string; name: string }[] | undefined) ?? []
       let id = groups.find(g => g.name === want)?.id
