@@ -146,3 +146,20 @@ test('after a turn, the plugin renames the session and files it under its machin
   const remote = calls.filter(c => c.tool === 'mcp__ccd_session_mgmt__set_remote_control').map(c => c.enabled)
   expect(remote).toEqual([false, true])
 })
+
+test('done keeps the title the session already has, and the person reads no model instructions', async ($, on) => {
+  const files = new Map<string, string>()
+  fakeHost(on, files, 'D:/Work/game')
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string }
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return { result: '{"title":"[3090] Cutscene lighting"}', text: '{"title":"[3090] Cutscene lighting"}' }
+    return { result: 'ok', text: 'ok' }
+  })
+  on('command.run', () => ({ text: '' }))
+  on('prompt.submit', () => ({ value: undefined }) as never)
+  await $.session.start({ cwd: 'D:/Work/game', surface: 'desktop', isInteractive: true })
+
+  const ran = await $.command.run({ command: 'done', args: '' } as never)
+  expect(ran.text).toBe('Marked done: [3090] ✅ Cutscene lighting. Moving it to Done and syncing to the other machines.')
+  expect(ran.text ?? '').not.toContain('mcp__')
+})

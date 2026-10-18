@@ -252,14 +252,16 @@ export const register: Register = (on, options) => {
       : next(e),
   ).catch(($, e, next) => (next.called ? next(e) : { deny: 'session-fleet: its folder guard failed.' }))
 
-  on('command.run', { command: 'feature' }, async ($, e) =>
-    config ? { text: await setFeature($, config, e.args) } : { text: NOT_READY },
-  )
+  on('command.run', { command: 'feature' }, async ($, e) => {
+    if (!config) return { text: NOT_READY }
+    const reply = await setFeature($, config, e.args)
+    return reply.model ? { text: reply.user, context: [reply.model] } : { text: reply.user }
+  })
   on('command.run', { command: 'done' }, async ($, e) => {
     if (!config) return { text: NOT_READY }
-    const text = await markDone($, config, e.args)
-    void $.prompt.submit({ text: `${FIRST_PROMPT_MARK} ${text} Then reply with one short line.` })
-    return { text }
+    const reply = await markDone($, config, e.args)
+    // The model reads `context`, the person does not; it is filled only where the plugin cannot reach the app itself.
+    return reply.model ? { text: reply.user, context: [reply.model] } : { text: reply.user }
   })
   on('command.run', { command: 'sessions' }, async ($, e) =>
     config ? { text: await listSessions($, config, e.args.trim() === 'all') } : { text: NOT_READY },
@@ -267,10 +269,10 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'fleet' }, async $ => (config ? { text: await fleetStatus($, config) } : { text: NOT_READY }))
 
   on('tool.call', { tool: 'mcp__session-fleet__fleet_feature' }, async ($, e) =>
-    answer(config ? await setFeature($, config, String(arg(e, 'name') ?? '')) : NOT_READY),
+    config ? toolReply(await setFeature($, config, String(arg(e, 'name') ?? ''))) : answer(NOT_READY),
   )
   on('tool.call', { tool: 'mcp__session-fleet__fleet_done' }, async ($, e) =>
-    answer(config ? await markDone($, config, String(arg(e, 'note') ?? '')) : NOT_READY),
+    config ? toolReply(await markDone($, config, String(arg(e, 'note') ?? ''))) : answer(NOT_READY),
   )
   on('tool.call', { tool: 'mcp__session-fleet__fleet_sessions' }, async ($, e) =>
     answer(config ? await listSessions($, config, arg(e, 'all') === true) : NOT_READY),
@@ -346,7 +348,7 @@ async function syncApp($: $, cfg: Config) {
 
     const current = info.title ?? ''
     const isPrefixed = current.startsWith(`[${cfg.machine}]`)
-    if (!isPrefixed && rec.featureSource !== 'user') {
+    if ((!isPrefixed && rec.featureSource !== 'user') || !rec.feature) {
       const named = featureFromTitle(current, cfg.machine)
       if (named && named !== rec.feature) {
         rec.feature = named
@@ -420,29 +422,50 @@ async function registerTools($: $) {
   })
 }
 
-async function setFeature($: $, cfg: Config, raw: string): Promise<string> {
+/** What an action shows the person, and what the model is asked to do when the plugin cannot do it itself. */
+type ActionReply = { user: string; model?: string }
+
+/** The model's part of a reply, only on a machine where the app's tools do not answer the plugin. */
+async function modelAsk($: $, rec: FleetRecord): Promise<string | undefined> {
+  if ((await $.store.get(APP_SYNC_KEY)) === 'works') return undefined
+  const group = rec.status === 'done' ? 'Done' : rec.machine
+  return (
+    `${renameAsk(titleOf(rec))} If mcp__ccd_sidebar tools are available, also move this session into the sidebar group "${group}" ` +
+    `(create it if missing)${rec.status === 'done' ? ' and mark it completed' : ''}.`
+  )
+}
+
+/** A record without a feature takes it from the session's current title in the app. */
+async function adoptAppTitle($: $, cfg: Config, rec: FleetRecord) {
+  if (rec.feature) return
+  const info = parseJson(await callApp($, APP.get, { session_id: 'self' })) as { title?: string } | undefined
+  rec.feature = featureFromTitle(info?.title, cfg.machine)
+}
+
+async function setFeature($: $, cfg: Config, raw: string): Promise<ActionReply> {
   const name = raw.trim()
-  if (!name) return 'Give a feature name.'
+  if (!name) return { user: 'Give a feature name.' }
   const rec = await currentRecord($, cfg)
   rec.feature = name.slice(0, 60)
   rec.featureSource = 'user'
   await saveRecord($, cfg, rec)
   $.clock.after(0, () => void syncApp($, cfg))
-  return `Feature set: ${titleOf(rec)}. ${renameAsk(titleOf(rec))}`
+  return { user: `Feature set: ${titleOf(rec)}.`, model: await modelAsk($, rec) }
 }
 
-async function markDone($: $, cfg: Config, note: string): Promise<string> {
+async function markDone($: $, cfg: Config, note: string): Promise<ActionReply> {
   const rec = await currentRecord($, cfg)
+  await adoptAppTitle($, cfg, rec)
   rec.status = 'done'
   rec.doneAt = new Date(await $.clock.now()).toISOString()
   if (note.trim()) rec.note = note.trim().slice(0, 300)
   await saveRecord($, cfg, rec)
   $.clock.after(0, () => void syncApp($, cfg))
-  return (
-    `Marked done and synced: ${titleOf(rec)}. ${renameAsk(titleOf(rec))} ` +
-    'If mcp__ccd_sidebar tools are available, also mark this session completed and move it into the sidebar group "Done" (create it if missing).'
-  )
+  return { user: `Marked done: ${titleOf(rec)}. Moving it to Done and syncing to the other machines.`, model: await modelAsk($, rec) }
 }
+
+/** A tool's answer: the model reads both parts. */
+const toolReply = (reply: ActionReply) => answer(reply.model ? `${reply.user} ${reply.model}` : reply.user)
 
 async function listSessions($: $, cfg: Config, all: boolean): Promise<string> {
   await syncChain
