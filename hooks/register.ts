@@ -334,13 +334,15 @@ async function syncApp($: $, cfg: Config) {
     const rec = await loadRecord($, cfg, await $.session.id())
     if (!rec) return
     const info = parseJson(await callApp($, APP.get, { session_id: 'self' })) as
-      | { title?: string; group?: { id: string; name: string } | null; remoteControlState?: string }
+      | { title?: string; group?: { id: string; name: string } | null; remoteControlState?: string; scheduledTaskId?: string }
       | undefined
     if (!info || typeof info !== 'object') {
       await $.store.set(APP_SYNC_KEY, 'missing')
       return
     }
     await $.store.set(APP_SYNC_KEY, 'works')
+    // A scheduled task's run (the tidy task among them) stays as the app files it, under Routines.
+    if (info.scheduledTaskId) return
 
     const current = info.title ?? ''
     const isPrefixed = current.startsWith(`[${cfg.machine}]`)
