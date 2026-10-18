@@ -363,6 +363,9 @@ async function syncApp($: $, cfg: Config) {
       }
     }
 
+    // The app drops Remote Control from a session that went idle; an open session takes it back.
+    if (info.remoteControlState === 'off') await callApp($, APP.remote, { session_id: 'self', enabled: true })
+
     const want = rec.status === 'done' ? 'Done' : cfg.machine
     if (info.group?.name !== want) {
       const groups = (parseJson(await callApp($, APP.groups, {})) as { id: string; name: string }[] | undefined) ?? []
