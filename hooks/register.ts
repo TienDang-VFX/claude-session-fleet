@@ -156,6 +156,8 @@ export const register: Register = (on, options) => {
 
     const rec = await loadRecord($, cfg, id)
     if (rec) showStatus($, rec)
+    // A long turn ends late, and the app may retitle a session at any time: keep it in line while it is open.
+    $.clock.every(SYNC_EVERY_MS, () => void syncApp($, cfg))
     return next(e)
   })
 
@@ -220,6 +222,8 @@ export const register: Register = (on, options) => {
         if (isDoneTitle(e.session_title)) rec.status = 'done'
       } else if (isPersonsPrompt && !e.prompt.trimStart().startsWith('/')) rec.feature = await nameFeature($, e.prompt)
       if (rec.feature) await saveRecord($, cfg, rec)
+      // The app titles a new session while its first turn still runs: rename it soon, not when the turn ends.
+      for (const delay of FIRST_SYNC_DELAYS_MS) $.clock.after(delay, () => void syncApp($, cfg))
     }
     const title = titleOf(rec)
     if (e.session_title === title) return result
@@ -284,6 +288,10 @@ const NOT_READY = 'session-fleet is not loaded yet.'
 
 /** Whether the desktop app's own session and sidebar tools answer the plugin on this machine. */
 const APP_SYNC_KEY = 'appSync'
+
+/** When an open session is brought in line with its record besides each turn's end. */
+const FIRST_SYNC_DELAYS_MS = [30_000, 120_000]
+const SYNC_EVERY_MS = 30 * 60_000
 
 const APP = {
   get: 'mcp__ccd_session_mgmt__get_session',

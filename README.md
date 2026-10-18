@@ -22,8 +22,11 @@ Cài plugin session-fleet cho máy này.
    macOS/Linux: chạy ~/claude-session-fleet/install.sh --marker MyGame.uproject
    Nếu script báo lỗi clone registry thì dừng lại và báo tôi chạy `gh auth login`.
 3. Nếu có tool mcp__ccd_settings__set_setting thì đặt connect_new_sessions_to_remote_control = true.
-4. Báo lại tên máy, folder dự án mà script tìm được, và file ~/.claude/session-fleet.json.
+4. Tạo task dọn định kỳ: nếu mcp__scheduled-tasks__list_scheduled_tasks chưa có task "session-fleet-tidy" thì gọi mcp__scheduled-tasks__create_scheduled_task với taskId "session-fleet-tidy", cronExpression "0 */5 * * *", description "Dọn tên và nhóm sidebar của session mỗi 5 tiếng", prompt là toàn bộ nội dung file ~/claude-session-fleet/tidy-task.md. Sau đó chạy nó một lần ngay (mcp__scheduled-tasks__run_scheduled_task).
+5. Báo lại tên máy, folder dự án mà script tìm được, file ~/.claude/session-fleet.json, và task đã tạo.
 ```
+
+**Dọn định kỳ:** task `session-fleet-tidy` chạy mỗi 5 tiếng khi desktop app đang mở (nếu app tắt đúng giờ chạy thì nó chạy ngay khi app mở lại). Mỗi lần chạy, nó đổi tên mọi session của máy sang dạng `[máy] …` và chuyển chúng vào nhóm sidebar trùng tên máy (hoặc nhóm `Done` nếu có ✅), kể cả những session không mở. Trong lúc session đang mở, plugin còn tự đồng bộ 30 giây và 2 phút sau prompt đầu tiên, cuối mỗi lượt, và cứ 30 phút một lần.
 
 Script sẽ làm mấy việc sau:
 - Đặt tên máy theo GPU (RTX 3090 thành `3090`). Không có GPU rời thì lấy tên máy tính (Windows) hoặc hostname (macOS/Linux). Muốn tự đặt thì dùng `-Machine` / `--machine`.
