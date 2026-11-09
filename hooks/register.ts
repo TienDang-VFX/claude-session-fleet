@@ -9,7 +9,7 @@ import {
   formatTable,
   isInside,
   joinPath,
-  renamedFeature,
+  adoptTitle,
   storeVerdict,
   titleOf,
 } from './fleet'
@@ -144,15 +144,6 @@ async function setup($: $, options: PluginOptions, cwd: string, sessionId: strin
   return cfg
 }
 
-/** Takes a name the person gave the session as its feature (see renamedFeature); whether it did. The caller saves. */
-function adoptRename(rec: FleetRecord, current: string | undefined): boolean {
-  const named = renamedFeature(rec, current)
-  if (!named) return false
-  rec.feature = named
-  if (isDoneTitle(current)) rec.status = 'done'
-  return true
-}
-
 const STORE_RECHECK_MS = 3000
 
 /**
@@ -224,7 +215,7 @@ export const register: Register = (on, options) => {
     }
     rec.cwd = e.cwd
     // A resumed session the person renamed meanwhile keeps that name.
-    adoptRename(rec, e.session_title)
+    adoptTitle(rec, e.session_title)
     await saveRecord($, cfg, rec)
 
     const lines = [
@@ -269,9 +260,14 @@ export const register: Register = (on, options) => {
       if (rec.feature) await saveRecord($, cfg, rec)
       // The app titles a new session while its first turn still runs: rename it soon, not when the turn ends.
       for (const delay of FIRST_SYNC_DELAYS_MS) $.clock.after(delay, () => void syncApp($, cfg))
-    } else if (adoptRename(rec, e.session_title)) await saveRecord($, cfg, rec)
+    } else if (adoptTitle(rec, e.session_title)) await saveRecord($, cfg, rec)
     const title = titleOf(rec)
     if (e.session_title === title) return result
+    // The terminal applies a hook's sessionTitle (the desktop app ignores it): remember it as the plugin's own.
+    if (!(await isDesktop($)) && rec.appliedTitle !== title) {
+      rec.appliedTitle = title
+      await saveRecord($, cfg, rec, { sync: false })
+    }
     const askedKey = `asked:${e.session_id}`
     const isAsked = (await $.store.get(askedKey)) === title || (await $.store.get(APP_SYNC_KEY)) === 'works'
     if (!isAsked) await $.store.set(askedKey, title)
@@ -350,6 +346,8 @@ const APP = {
   remote: 'mcp__ccd_session_mgmt__set_remote_control',
 } as const
 
+const isDesktop = async ($: $) => ((await $.session.surfaces().catch(() => [])) as readonly string[]).includes('desktop')
+
 /** Calls one of the desktop app's tools; the answer's text, or undefined when it is missing or refused. */
 async function callApp($: $, tool: string, args: Record<string, unknown>): Promise<string | undefined> {
   const ran = await $.tool.call({ tool, ...args } as never).catch(() => undefined)
@@ -391,11 +389,17 @@ async function syncApp($: $, cfg: Config) {
     // A scheduled task's run (the tidy task among them) stays as the app files it, under Routines.
     if (info.scheduledTaskId) return
 
-    // A title the plugin did not set is the person's rename (or the app's first title): it becomes the feature, and
-    // the session keeps it under the machine prefix instead of being put back.
+    // A title the plugin did not set is the person's rename, kept as it is, or the app's first title, which becomes the
+    // feature under the machine prefix (see adoptTitle).
     const current = info.title ?? ''
-    if (adoptRename(rec, current)) await saveRecord($, cfg, rec)
+    if (adoptTitle(rec, current)) await saveRecord($, cfg, rec)
     const title = titleOf(rec)
+    // A session already showing the plugin's title (one from before appliedTitle was kept) is marked as titled, so a
+    // later rename counts as the person's.
+    if (current === title && !rec.userTitle && rec.appliedTitle !== title) {
+      rec.appliedTitle = title
+      await saveRecord($, cfg, rec, { sync: false })
+    }
     if (current !== title && (await callApp($, APP.title, { session_id: 'self', title })) !== undefined) {
       rec.appliedTitle = title
       await saveRecord($, cfg, rec, { sync: false })
@@ -489,6 +493,8 @@ async function setFeature($: $, cfg: Config, raw: string): Promise<ActionReply> 
   const rec = await currentRecord($, cfg)
   rec.feature = name.slice(0, 60)
   rec.featureSource = 'user'
+  // Naming the feature asks for the plugin's title again, over an earlier rename.
+  delete rec.userTitle
   await saveRecord($, cfg, rec)
   $.clock.after(0, () => void syncApp($, cfg))
   return { user: `Feature set: ${titleOf(rec)}.`, model: await modelAsk($, rec) }

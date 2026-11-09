@@ -15,13 +15,26 @@ export type FleetRecord = {
   isMarkedCompleted?: boolean
   /** The title the plugin last gave the session in the app; any other title is the person's (or the app's) rename. */
   appliedTitle?: string
+  /** The title the person gave the session, kept word for word: the plugin no longer puts its own title back. */
+  userTitle?: string
 }
 
 /** Leads the prompts the plugin submits itself, so they never name a feature. */
 export const FIRST_PROMPT_MARK = 'session-fleet:'
 
 export const titleOf = (rec: FleetRecord) =>
-  `[${rec.machine}] ${rec.status === 'done' ? '✅ ' : ''}${rec.feature || DEFAULT_FEATURE}`
+  rec.userTitle
+    ? rec.status === 'done'
+      ? withDoneMark(rec.userTitle, rec.machine)
+      : rec.userTitle
+    : `[${rec.machine}] ${rec.status === 'done' ? '✅ ' : ''}${rec.feature || DEFAULT_FEATURE}`
+
+/** A person's title with the done mark: after the machine prefix when it has one, else in front. */
+function withDoneMark(title: string, machine: string): string {
+  if (isDoneTitle(title)) return title
+  const prefix = `[${machine}] `
+  return title.startsWith(prefix) ? `${prefix}✅ ${title.slice(prefix.length)}` : `✅ ${title}`
+}
 
 export const joinPath = (...parts: string[]) =>
   parts
@@ -57,13 +70,25 @@ export function featureFromTitle(title: string | undefined, machine: string): st
 }
 
 /**
- * The feature named by a title the plugin did not set: the person renamed the session (or the app titled it), and
- * that name wins over the record. Empty when the title is the plugin's own, its placeholder, or names the same feature.
+ * Takes in a title the plugin did not set; whether the record changed (the caller saves).
+ *
+ * - Once the plugin has titled the session (appliedTitle), or the person already renamed it, or the title carries the
+ *   machine prefix, any other title is the person's rename: it is kept word for word (userTitle) and names the feature.
+ * - Before that, a title without the prefix is the app's own first title: it names the feature, under the prefix.
  */
-export function renamedFeature(rec: FleetRecord, current: string | undefined): string {
-  if (!current || current === titleOf(rec) || current === rec.appliedTitle) return ''
+export function adoptTitle(rec: FleetRecord, current: string | undefined): boolean {
+  if (!current || current === titleOf(rec) || current === rec.appliedTitle) return false
   const named = featureFromTitle(current, rec.machine)
-  return named === rec.feature ? '' : named
+  const isPersons = rec.userTitle !== undefined || !!rec.appliedTitle || current.trim().startsWith(`[${rec.machine}]`)
+  if (isPersons) {
+    rec.userTitle = current
+    if (named) rec.feature = named
+  } else {
+    if (!named || named === rec.feature) return false
+    rec.feature = named
+  }
+  if (isDoneTitle(current)) rec.status = 'done'
+  return true
 }
 
 /**

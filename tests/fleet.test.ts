@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { featureFromTitle, formatTable, isDoneTitle, isInside, joinPath, renamedFeature, storeVerdict, titleOf, type FleetRecord } from '../hooks/fleet'
+import { featureFromTitle, formatTable, isDoneTitle, adoptTitle, isInside, joinPath, storeVerdict, titleOf, type FleetRecord } from '../hooks/fleet'
 
 const rec = (over: Partial<FleetRecord> = {}): FleetRecord => ({
   machine: '3090',
@@ -40,15 +40,37 @@ describe('helpers', () => {
     expect(isDoneTitle('[3090] Đuôi cáo')).toBe(false)
   })
 
-  test('a title the plugin did not set is a rename, with or without the machine prefix', () => {
-    const named = rec({ feature: 'Old work', appliedTitle: '[3090] Old work' })
-    expect(renamedFeature(named, '[3090] Old work')).toBe('')
-    expect(renamedFeature(named, 'My own name')).toBe('My own name')
-    expect(renamedFeature(named, '[3090] Kept prefix')).toBe('Kept prefix')
-    expect(renamedFeature(named, undefined)).toBe('')
+  test("once the plugin titled the session, another title is the person's and is kept word for word", () => {
+    const named = () => rec({ feature: 'Old work', appliedTitle: '[3090] Old work' })
+    expect(adoptTitle(named(), '[3090] Old work')).toBe(false)
+    expect(adoptTitle(named(), undefined)).toBe(false)
+    const mine = named()
+    expect(adoptTitle(mine, 'My own name')).toBe(true)
+    expect(mine).toMatchObject({ feature: 'My own name', userTitle: 'My own name' })
+    expect(titleOf(mine)).toBe('My own name')
+    const prefixed = named()
+    expect(adoptTitle(prefixed, '[3090] Kept prefix')).toBe(true)
+    expect(titleOf(prefixed)).toBe('[3090] Kept prefix')
+    // Taking the prefix off a plugin title is a rename too, not put back.
+    const bare = named()
+    expect(adoptTitle(bare, 'Old work')).toBe(true)
+    expect(titleOf(bare)).toBe('Old work')
     // The plugin's last title, before a /feature reached the app, is not taken back as a rename.
-    expect(renamedFeature(rec({ feature: 'New', appliedTitle: '[3090] Old' }), '[3090] Old')).toBe('')
-    expect(renamedFeature(rec(), '[3090] new session')).toBe('')
+    expect(adoptTitle(rec({ feature: 'New', appliedTitle: '[3090] Old' }), '[3090] Old')).toBe(false)
+    expect(adoptTitle(rec(), '[3090] new session')).toBe(false)
+  })
+
+  test("the app's first title, before the plugin titled the session, goes under the machine prefix", () => {
+    const fresh = rec({ feature: 'haiku name' })
+    expect(adoptTitle(fresh, 'Recreate VFX Gymboard')).toBe(true)
+    expect(fresh.userTitle).toBeUndefined()
+    expect(titleOf(fresh)).toBe('[3090] Recreate VFX Gymboard')
+  })
+
+  test("a person's title takes the done mark after its prefix, or in front", () => {
+    expect(titleOf(rec({ userTitle: 'Đuôi cáo', status: 'done' }))).toBe('✅ Đuôi cáo')
+    expect(titleOf(rec({ userTitle: '[3090] Đuôi cáo', status: 'done' }))).toBe('[3090] ✅ Đuôi cáo')
+    expect(titleOf(rec({ userTitle: '✅ Đuôi cáo', status: 'done' }))).toBe('✅ Đuôi cáo')
   })
 
   test('a store file is damaged when zero-filled or not a JSON object', () => {
@@ -165,7 +187,7 @@ test('after a turn, the plugin renames the session and files it under its machin
   expect(remote).toEqual([false, true])
 })
 
-test('a session the person renamed keeps the name under the machine prefix instead of being put back', async ($, on) => {
+test('a session the person renamed keeps that exact name instead of being put back', async ($, on) => {
   const files = new Map<string, string>()
   const clock = fakeHost(on, files, 'D:\\Work\\game')
   const old: FleetRecord = { ...JSON.parse('{}'), machine: '3090', sessionId: 'sess-1', cwd: 'D:\\Work\\game', feature: 'Old work', status: 'active', startedAt: '', updatedAt: '', appliedTitle: '[3090] Old work' }
@@ -184,9 +206,9 @@ test('a session the person renamed keeps the name under the machine prefix inste
   await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
   await clock.settle()
 
-  expect(titles).toEqual(['[3090] Tên tôi tự đặt'])
+  expect(titles).toEqual([])
   const saved = JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}') as FleetRecord
-  expect(saved).toMatchObject({ feature: 'Tên tôi tự đặt', appliedTitle: '[3090] Tên tôi tự đặt' })
+  expect(saved).toMatchObject({ feature: 'Tên tôi tự đặt', userTitle: 'Tên tôi tự đặt' })
 })
 
 test('a rename that keeps the machine prefix is kept as it is', async ($, on) => {

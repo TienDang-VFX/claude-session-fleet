@@ -3,6 +3,7 @@
 Plugin Claude Code cho nhiều máy dùng chung một tài khoản Claude:
 
 - Tên session luôn bắt đầu bằng tên máy: `[3090] <feature>`, khi xong thì thành `[3090] ✅ <feature>`.
+- Bạn tự đổi tên session thì tên đó được giữ nguyên văn (có hay không có tiền tố máy); plugin chỉ thêm ✅ khi xong. `/feature` hoặc `fleet_feature` đặt lại tên theo dạng `[máy] <feature>`.
 - Feature được đặt tên tự động từ prompt đầu tiên. Đổi tên bằng `/feature <tên>`.
 - Session mở ngoài folder dự án của máy thì bị chặn Edit/Write/Bash/PowerShell cho tới khi bạn chạy `/fleet-here`.
 - Kiểm tra Remote Control và nhắc nếu đang tắt.
@@ -26,7 +27,7 @@ Cài plugin session-fleet cho máy này.
 5. Báo lại tên máy, folder dự án mà script tìm được, file ~/.claude/session-fleet.json, và task đã tạo.
 ```
 
-**Dọn định kỳ:** task `session-fleet-tidy` chạy mỗi ngày lúc 8:00 khi desktop app đang mở (nếu app tắt đúng giờ chạy thì nó chạy ngay khi app mở lại). Mỗi lần chạy, nó đổi tên mọi session của máy sang dạng `[máy] …` và chuyển chúng vào nhóm sidebar trùng tên máy (hoặc nhóm `Done` nếu có ✅), kể cả những session không mở. Cuối mỗi lần chạy, nó archive các lượt chạy cũ của chính nó rồi tự archive lượt đang chạy, để sidebar không đầy session "session-fleet: dọn session". Trong lúc session đang mở, plugin còn tự đồng bộ 30 giây và 2 phút sau prompt đầu tiên, cuối mỗi lượt, và cứ 30 phút một lần.
+**Dọn định kỳ:** task `session-fleet-tidy` chạy mỗi ngày lúc 8:00 khi desktop app đang mở (nếu app tắt đúng giờ chạy thì nó chạy ngay khi app mở lại). Mỗi lần chạy, nó không đổi tên session nào, chỉ chuyển chúng vào nhóm sidebar trùng tên máy (hoặc nhóm `Done` nếu có ✅), kể cả những session không mở. Cuối mỗi lần chạy, nó archive các lượt chạy cũ của chính nó rồi tự archive lượt đang chạy, để sidebar không đầy session "session-fleet: dọn session". Trong lúc session đang mở, plugin còn tự đồng bộ 30 giây và 2 phút sau prompt đầu tiên, cuối mỗi lượt, và cứ 30 phút một lần.
 
 Script sẽ làm mấy việc sau:
 - Đặt tên máy theo GPU (RTX 3090 thành `3090`). Không có GPU rời thì lấy tên máy tính (Windows) hoặc hostname (macOS/Linux). Muốn tự đặt thì dùng `-Machine` / `--machine`.
