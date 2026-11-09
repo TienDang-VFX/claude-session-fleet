@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { featureFromTitle, formatTable, isDoneTitle, isInside, joinPath, titleOf, type FleetRecord } from '../hooks/fleet'
+import { featureFromTitle, formatTable, isDoneTitle, isInside, joinPath, renamedFeature, storeVerdict, titleOf, type FleetRecord } from '../hooks/fleet'
 
 const rec = (over: Partial<FleetRecord> = {}): FleetRecord => ({
   machine: '3090',
@@ -38,6 +38,24 @@ describe('helpers', () => {
     expect(featureFromTitle(undefined, '5080')).toBe('')
     expect(isDoneTitle('[3090] ✅ #33064 Fix tests')).toBe(true)
     expect(isDoneTitle('[3090] Đuôi cáo')).toBe(false)
+  })
+
+  test('a title the plugin did not set is a rename, with or without the machine prefix', () => {
+    const named = rec({ feature: 'Old work', appliedTitle: '[3090] Old work' })
+    expect(renamedFeature(named, '[3090] Old work')).toBe('')
+    expect(renamedFeature(named, 'My own name')).toBe('My own name')
+    expect(renamedFeature(named, '[3090] Kept prefix')).toBe('Kept prefix')
+    expect(renamedFeature(named, undefined)).toBe('')
+    // The plugin's last title, before a /feature reached the app, is not taken back as a rename.
+    expect(renamedFeature(rec({ feature: 'New', appliedTitle: '[3090] Old' }), '[3090] Old')).toBe('')
+    expect(renamedFeature(rec(), '[3090] new session')).toBe('')
+  })
+
+  test('a store file is damaged when zero-filled or not a JSON object', () => {
+    expect(storeVerdict('{"a":1}')).toBe('ok')
+    expect(storeVerdict('\u0000'.repeat(64))).toBe('nul')
+    expect(storeVerdict('{"a":')).toBe('bad')
+    expect(storeVerdict('[]')).toBe('bad')
   })
 
   test('paths join with forward slashes', () => {
@@ -145,6 +163,73 @@ test('after a turn, the plugin renames the session and files it under its machin
   expect(calls.find(c => c.tool === 'mcp__ccd_sidebar__move_sessions')).toMatchObject({ group_id: 'cg-2a' })
   const remote = calls.filter(c => c.tool === 'mcp__ccd_session_mgmt__set_remote_control').map(c => c.enabled)
   expect(remote).toEqual([false, true])
+})
+
+test('a session the person renamed keeps the name under the machine prefix instead of being put back', async ($, on) => {
+  const files = new Map<string, string>()
+  const clock = fakeHost(on, files, 'D:\\Work\\game')
+  const old: FleetRecord = { ...JSON.parse('{}'), machine: '3090', sessionId: 'sess-1', cwd: 'D:\\Work\\game', feature: 'Old work', status: 'active', startedAt: '', updatedAt: '', appliedTitle: '[3090] Old work' }
+  files.set('R:/reg/sessions/3090/sess-1.json', JSON.stringify(old))
+  const titles: unknown[] = []
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string; title?: string }
+    const info = '{"title":"Tên tôi tự đặt","group":{"id":"cg-1","name":"3090"}}'
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return { result: info, text: info }
+    if (call.tool === 'mcp__ccd_session_mgmt__set_session_title') titles.push(call.title)
+    return { result: 'ok', text: 'ok' }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: 'D:\\Work\\game', surface: 'desktop', isInteractive: true })
+
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.settle()
+
+  expect(titles).toEqual(['[3090] Tên tôi tự đặt'])
+  const saved = JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}') as FleetRecord
+  expect(saved).toMatchObject({ feature: 'Tên tôi tự đặt', appliedTitle: '[3090] Tên tôi tự đặt' })
+})
+
+test('a rename that keeps the machine prefix is kept as it is', async ($, on) => {
+  const files = new Map<string, string>()
+  const clock = fakeHost(on, files, 'D:\\Work\\game')
+  const old: FleetRecord = { machine: '3090', sessionId: 'sess-1', cwd: 'D:\\Work\\game', feature: 'Old work', status: 'active', startedAt: '', updatedAt: '', appliedTitle: '[3090] Old work' }
+  files.set('R:/reg/sessions/3090/sess-1.json', JSON.stringify(old))
+  const titles: unknown[] = []
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string; title?: string }
+    const info = '{"title":"[3090] Đổi tên giữ tiền tố","group":{"id":"cg-1","name":"3090"}}'
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return { result: info, text: info }
+    if (call.tool === 'mcp__ccd_session_mgmt__set_session_title') titles.push(call.title)
+    return { result: 'ok', text: 'ok' }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: 'D:\\Work\\game', surface: 'desktop', isInteractive: true })
+
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.settle()
+
+  expect(titles).toEqual([])
+  const saved = JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}') as FleetRecord
+  expect(saved.feature).toBe('Đổi tên giữ tiền tố')
+})
+
+test('a zero-filled plugin store file is copied aside and reset at session start', async ($, on) => {
+  const files = new Map<string, string>()
+  fakeHost(on, files, 'D:\\Work\\game')
+  const dir = 'C:/home/.claude/plugins/store'
+  files.set(dir, '')
+  files.set(`${dir}/broken_x.json`, '\u0000'.repeat(32))
+  files.set(`${dir}/fine_y.json`, '{"k":1}')
+  on('fs.list', ($, e) =>
+    slash(e.path) === dir
+      ? { value: [{ name: 'broken_x.json', kind: 'file' }, { name: 'fine_y.json', kind: 'file' }] }
+      : { value: [] },
+  )
+  await $.session.start({ cwd: 'D:\\Work\\game', surface: 'desktop', isInteractive: true })
+
+  expect(files.get(`${dir}/broken_x.json`)).toBe('{}\n')
+  expect(files.get(`${dir}/fine_y.json`)).toBe('{"k":1}')
+  expect([...files.keys()].some(k => k.startsWith('C:/home/.claude/plugins/store-quarantine/') && k.endsWith('broken_x.json'))).toBe(true)
 })
 
 test('done keeps the title the session already has, and the person reads no model instructions', async ($, on) => {

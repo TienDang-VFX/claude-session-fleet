@@ -13,6 +13,8 @@ export type FleetRecord = {
   featureSource?: 'auto' | 'user'
   /** Set once the desktop app's sidebar shows the done session as completed. */
   isMarkedCompleted?: boolean
+  /** The title the plugin last gave the session in the app; any other title is the person's (or the app's) rename. */
+  appliedTitle?: string
 }
 
 /** Leads the prompts the plugin submits itself, so they never name a feature. */
@@ -52,6 +54,31 @@ export function featureFromTitle(title: string | undefined, machine: string): st
     .replace(/^✅\s*/, '')
     .trim()
   return bare.toLowerCase() === DEFAULT_FEATURE ? '' : bare.slice(0, 60)
+}
+
+/**
+ * The feature named by a title the plugin did not set: the person renamed the session (or the app titled it), and
+ * that name wins over the record. Empty when the title is the plugin's own, its placeholder, or names the same feature.
+ */
+export function renamedFeature(rec: FleetRecord, current: string | undefined): string {
+  if (!current || current === titleOf(rec) || current === rec.appliedTitle) return ''
+  const named = featureFromTitle(current, rec.machine)
+  return named === rec.feature ? '' : named
+}
+
+/**
+ * Whether a plugin store file (~/.claude/plugins/store/*.json) is readable: 'ok'; 'nul' when it holds NUL bytes
+ * (a write lost to a crash or power cut leaves the file zero-filled, and the engine then refuses the plugin's whole
+ * start); 'bad' for other text that is not a JSON object, which may be a write still landing.
+ */
+export function storeVerdict(text: string): 'ok' | 'nul' | 'bad' {
+  if (text.includes('\u0000')) return 'nul'
+  try {
+    const value: unknown = JSON.parse(text)
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? 'ok' : 'bad'
+  } catch {
+    return 'bad'
+  }
 }
 
 /** Whether a title marks its session done (a ✅ anywhere in it). */

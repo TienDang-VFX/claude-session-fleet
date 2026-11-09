@@ -9,6 +9,8 @@ import {
   formatTable,
   isInside,
   joinPath,
+  renamedFeature,
+  storeVerdict,
   titleOf,
 } from './fleet'
 
@@ -142,8 +144,53 @@ async function setup($: $, options: PluginOptions, cwd: string, sessionId: strin
   return cfg
 }
 
+/** Takes a name the person gave the session as its feature (see renamedFeature); whether it did. The caller saves. */
+function adoptRename(rec: FleetRecord, current: string | undefined): boolean {
+  const named = renamedFeature(rec, current)
+  if (!named) return false
+  rec.feature = named
+  if (isDoneTitle(current)) rec.status = 'done'
+  return true
+}
+
+const STORE_RECHECK_MS = 3000
+
+/**
+ * Plugin store files the engine can no longer parse stop their plugin's whole start ("store file ... is malformed"),
+ * and reinstalling the plugin does not touch them. Each one is copied to ~/.claude/plugins/store-quarantine and reset
+ * to an empty object, so the plugin starts with a fresh store. A zero-filled file is reset at once; other unparsable
+ * text only when it reads the same a few seconds later, so a write still landing is never taken for damage.
+ */
+async function healStores($: $) {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  if (!home) return
+  const dir = joinPath(home, '.claude', 'plugins', 'store')
+  if (!(await $.fs.exists(dir))) return
+  for (const entry of await $.fs.list(dir)) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    const file = joinPath(dir, entry.name)
+    const text = await $.fs.read(file).catch(() => undefined)
+    if (text === undefined) continue
+    const verdict = storeVerdict(text)
+    if (verdict === 'nul') await quarantine($, home, file, entry.name, text)
+    else if (verdict === 'bad')
+      $.clock.after(STORE_RECHECK_MS, async () => {
+        const again = await $.fs.read(file).catch(() => undefined)
+        if (again === text) await quarantine($, home, file, entry.name, text)
+      })
+  }
+}
+
+async function quarantine($: $, home: string, file: string, name: string, text: string) {
+  const stamp = new Date(await $.clock.now()).toISOString().replace(/[:.]/g, '-')
+  await $.fs.write(joinPath(home, '.claude', 'plugins', 'store-quarantine', `${stamp}-${name}`), text)
+  await $.fs.write(file, '{}\n')
+  $.ui.toast(`session-fleet: plugin store ${name} was damaged; reset it (copy in store-quarantine). Restart sessions of that plugin.`)
+}
+
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
+    await healStores($).catch(err => $.ui.log(`session-fleet: store check failed: ${String(err)}`, { to: 'debug' }))
     const id = await $.session.id()
     const cfg = await ensure($, options, e.cwd, id)
 
@@ -176,10 +223,8 @@ export const register: Register = (on, options) => {
       updatedAt: now,
     }
     rec.cwd = e.cwd
-    if (!rec.feature) {
-      rec.feature = featureFromTitle(e.session_title, cfg.machine)
-      if (rec.feature && isDoneTitle(e.session_title)) rec.status = 'done'
-    }
+    // A resumed session the person renamed meanwhile keeps that name.
+    adoptRename(rec, e.session_title)
     await saveRecord($, cfg, rec)
 
     const lines = [
@@ -224,7 +269,7 @@ export const register: Register = (on, options) => {
       if (rec.feature) await saveRecord($, cfg, rec)
       // The app titles a new session while its first turn still runs: rename it soon, not when the turn ends.
       for (const delay of FIRST_SYNC_DELAYS_MS) $.clock.after(delay, () => void syncApp($, cfg))
-    }
+    } else if (adoptRename(rec, e.session_title)) await saveRecord($, cfg, rec)
     const title = titleOf(rec)
     if (e.session_title === title) return result
     const askedKey = `asked:${e.session_id}`
@@ -346,18 +391,14 @@ async function syncApp($: $, cfg: Config) {
     // A scheduled task's run (the tidy task among them) stays as the app files it, under Routines.
     if (info.scheduledTaskId) return
 
+    // A title the plugin did not set is the person's rename (or the app's first title): it becomes the feature, and
+    // the session keeps it under the machine prefix instead of being put back.
     const current = info.title ?? ''
-    const isPrefixed = current.startsWith(`[${cfg.machine}]`)
-    if ((!isPrefixed && rec.featureSource !== 'user') || !rec.feature) {
-      const named = featureFromTitle(current, cfg.machine)
-      if (named && named !== rec.feature) {
-        rec.feature = named
-        if (isDoneTitle(current)) rec.status = 'done'
-        await saveRecord($, cfg, rec)
-      }
-    }
+    if (adoptRename(rec, current)) await saveRecord($, cfg, rec)
     const title = titleOf(rec)
     if (current !== title && (await callApp($, APP.title, { session_id: 'self', title })) !== undefined) {
+      rec.appliedTitle = title
+      await saveRecord($, cfg, rec, { sync: false })
       // Other devices read the title when Remote Control connects: reconnect so they see the new one.
       if (info.remoteControlState === 'on') {
         await callApp($, APP.remote, { session_id: 'self', enabled: false })
