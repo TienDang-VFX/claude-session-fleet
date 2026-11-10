@@ -46,6 +46,8 @@ Registry mặc định là repo private `TienDang-VFX/claude-session-registry`, 
 
 Không dùng git thì chạy script với `-RegistryGit ""` (chỉ lưu ở máy đó) hoặc `-RegistryDir <folder dùng chung>`.
 
+**Trạng thái đang làm gì (từ 0.3.0):** mỗi file còn có `live` (`working` khi một lượt đang chạy, `waiting` khi phiên dừng chờ bạn: hỏi quyền, hỏi câu hỏi, chờ duyệt kế hoạch; `idle` khi lượt xong) và `remoteSession`, phiên Remote Control mở được phiên đó từ máy khác (`claude.ai/code/<id>`). Thay đổi trạng thái được ghi ngay vào file và đẩy lên sau vài giây (3 giây khi chờ bạn, 20 giây với các trạng thái khác), nên một loạt thay đổi gần nhau chỉ thành một commit. LumenLite đọc các trường này để hiện phiên đang chạy và đang chờ bạn của mọi máy.
+
 ## Trong desktop app
 
 Desktop app không hiện các lệnh `/feature`, `/done`, `/sessions`, `/fleet`, nên plugin cung cấp thêm tool để Claude gọi. Bạn chỉ cần nói bằng lời:

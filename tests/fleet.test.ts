@@ -96,16 +96,17 @@ describe('helpers', () => {
 const slash = (p: string) => p.replace(/\\/g, '/')
 
 /** An in-memory disk, a session and a quiet host beneath the plugin. */
-function fakeHost(on: On, files: Map<string, string>, cwd: string) {
+function fakeHost(on: On, files: Map<string, string>, cwd: string, env: Record<string, string> = {}) {
   mock.store(on)
-  mock.env(on, { USERPROFILE: 'C:/home' })
+  mock.env(on, { USERPROFILE: 'C:/home', ...env })
   files.set('C:/home/.claude/session-fleet.json', JSON.stringify(CONFIG))
   const clock = mock.clock(on, { now: Date.parse('2026-10-17T00:00:00.000Z') })
   on('fs.write', ($, e) => {
     files.set(slash(e.path), e.text)
     return { value: undefined }
   })
-  on('fs.exists', ($, e) => ({ value: files.has(slash(e.path)) }))
+  // A folder exists when a file lies under it.
+  on('fs.exists', ($, e) => ({ value: files.has(slash(e.path)) || [...files.keys()].some(k => k.startsWith(slash(e.path) + '/')) }))
   on('fs.read', ($, e) => {
     const text = files.get(slash(e.path))
     return text === undefined ? { deny: `missing ${e.path}` } : { value: text }
@@ -269,4 +270,48 @@ test('done keeps the title the session already has, and the person reads no mode
   const ran = await $.command.run({ command: 'done', args: '' } as never)
   expect(ran.text).toBe('Marked done: [3090] ✅ Cutscene lighting. Moving it to Done and syncing to the other machines.')
   expect(ran.text ?? '').not.toContain('mcp__')
+})
+
+test('the registry follows what the session is doing, and names its Remote Control session', async ($, on) => {
+  const files = new Map<string, string>()
+  const clock = fakeHost(on, files, 'D:\\Work\\game', { APPDATA: 'C:/home/AppData/Roaming' })
+  files.set(
+    'C:/home/AppData/Roaming/Claude/claude-code-sessions/acct/org/local_abc.json',
+    JSON.stringify({ sessionId: 'local_abc', bridgeSessionIds: ['session_old', 'session_01New'], lastActivityAt: 5 }),
+  )
+  on('fs.list', ($, e) => {
+    const dir = slash(e.path).replace(/\/$/, '') + '/'
+    const names = new Map<string, 'file' | 'dir'>()
+    for (const path of files.keys()) {
+      if (!path.startsWith(dir)) continue
+      const rest = path.slice(dir.length).split('/')
+      names.set(rest[0], rest.length > 1 ? 'dir' : 'file')
+    }
+    return { value: [...names].map(([name, kind]) => ({ name, kind })) } as never
+  })
+  const record = () => JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}') as FleetRecord
+  let duringQuestion: string | undefined
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string }
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') { const info = '{"sessionId":"local_abc","title":"x"}'; return { result: info, text: info } }
+    if (call.tool === 'AskUserQuestion') duringQuestion = record().live?.state
+    return { result: 'ok', text: 'ok' }
+  })
+  on('classic.SessionStart', () => ({}))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }) as never)
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: 'D:\Work\game', surface: 'desktop', isInteractive: true })
+  await $.classic.SessionStart({ source: 'startup', session_id: 'sess-1', cwd: 'D:\Work\game' })
+
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  expect(record().live?.state).toBe('working')
+  expect(record().remoteSession).toBe('session_01New')
+
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [] } } as never)
+  expect(duringQuestion).toBe('waiting')
+  expect(record().live?.state).toBe('working')
+
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.settle()
+  expect(record().live?.state).toBe('idle')
 })

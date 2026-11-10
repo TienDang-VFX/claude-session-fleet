@@ -2,6 +2,9 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
 import {
   type FleetRecord,
+  type LiveState,
+  bridgeOf,
+  livePushDelay,
   FIRST_PROMPT_MARK,
   featureFromText,
   featureFromTitle,
@@ -278,20 +281,43 @@ export const register: Register = (on, options) => {
     }
   })
 
+  on('turn.start', async ($, e, next) => {
+    if (!e.agentId && config) await setLive($, config, 'working')
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (!e.agentId && config) {
       const cfg = config
+      await setLive($, cfg, 'idle')
       $.clock.after(0, () => void syncApp($, cfg))
     }
     return result
   })
 
-  on('tool.call', ($, e, next) =>
-    isOutside && GUARDED.has(String(e.tool))
-      ? { deny: `session-fleet: this session runs outside ${config?.root}; start it there or run /fleet-here.` }
-      : next(e),
-  ).catch(($, e, next) => (next.called ? next(e) : { deny: 'session-fleet: its folder guard failed.' }))
+  // The session stops for the person: a permission prompt or a question dialog.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    if (config) await setLive($, config, 'waiting')
+    return next(e)
+  })
+  on('classic.Notification', async ($, e, next) => {
+    if (config && (e.notification_type === 'permission_prompt' || e.notification_type === 'elicitation_dialog'))
+      await setLive($, config, 'waiting')
+    return next(e)
+  })
+
+  on('tool.call', async ($, e, next) => {
+    if (isOutside && GUARDED.has(String(e.tool)))
+      return { deny: `session-fleet: this session runs outside ${config?.root}; start it there or run /fleet-here.` }
+    // A question or a plan to approve stops the turn for the person.
+    const asks = ASKS.has(String(e.tool))
+    if (asks && config) await setLive($, config, 'waiting')
+    const result = await next(e)
+    // Answered, or allowed after a permission prompt: the turn goes on.
+    if (config && (asks || liveState === 'waiting')) await setLive($, config, 'working')
+    return result
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'session-fleet: its folder guard failed.' }))
 
   on('command.run', { command: 'feature' }, async ($, e) => {
     if (!config) return { text: NOT_READY }
@@ -328,6 +354,77 @@ export const register: Register = (on, options) => {
 }
 
 const NOT_READY = 'session-fleet is not loaded yet.'
+
+/** Tools that stop the turn until the person answers. */
+const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode'])
+
+/** The live state last written for this session, and the push it waits for (only the newest goes). */
+let liveState: LiveState | undefined
+let livePush = 0
+
+/**
+ * Records what the session is doing in the registry: written at once, pushed a little later so a burst of changes (a
+ * turn that starts, asks and goes on) makes one commit. The Remote Control session is looked up once per load.
+ */
+async function setLive($: $, cfg: Config, state: LiveState) {
+  if (liveState === state) return
+  liveState = state
+  const rec = await loadRecord($, cfg, await $.session.id())
+  if (!rec) return
+  rec.live = { state, at: new Date(await $.clock.now()).toISOString() }
+  // Remote Control may connect after the first turn starts, and a reconnect opens a new bridge: look again until found,
+  // and at each turn's end.
+  if (!rec.remoteSession || state === 'idle') {
+    const bridge = await findBridge($).catch(() => undefined)
+    if (bridge) rec.remoteSession = bridge
+  }
+  await saveRecord($, cfg, rec, { sync: false })
+  const mine = ++livePush
+  $.clock.after(livePushDelay(state), async () => {
+    if (mine !== livePush) return
+    const latest = await loadRecord($, cfg, rec.sessionId)
+    if (latest) await pushRecord($, cfg, latest)
+  })
+}
+
+/**
+ * The Remote Control session of this desktop session: the app keeps it in its own file for the session,
+ * <app data>/claude-code-sessions/<account>/<org>/<local id>.json, as bridgeSessionIds.
+ */
+async function findBridge($: $): Promise<string | undefined> {
+  const info = parseJson(await callApp($, APP.get, { session_id: 'self' })) as { sessionId?: string } | undefined
+  const local = info?.sessionId
+  if (!local || !/^local_[A-Za-z0-9-]+$/.test(local)) return undefined
+  const roaming = ((await $.env.get('APPDATA')) ?? '').trim()
+  const localData = ((await $.env.get('LOCALAPPDATA')) ?? '').trim()
+  const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').trim()
+  const bases: string[] = []
+  if (roaming) bases.push(joinPath(roaming, 'Claude'))
+  if (home) bases.push(joinPath(home, 'Library', 'Application Support', 'Claude'), joinPath(home, '.config', 'Claude'))
+  for (const [parent, prefix, tail] of [
+    [joinPath(localData, 'Claude-Data'), '', []],
+    [joinPath(localData, 'Packages'), 'Claude_', ['LocalCache', 'Roaming', 'Claude']],
+  ] as const) {
+    if (!localData || !(await $.fs.exists(parent))) continue
+    for (const entry of await $.fs.list(parent))
+      if (entry.kind === 'dir' && entry.name.startsWith(prefix)) bases.push(joinPath(parent, entry.name, ...tail))
+  }
+  let best: { id?: string; at: number } = { at: -1 }
+  for (const base of bases) {
+    const root = joinPath(base, 'claude-code-sessions')
+    if (!(await $.fs.exists(root))) continue
+    for (const account of await $.fs.list(root)) {
+      if (account.kind !== 'dir') continue
+      for (const org of await $.fs.list(joinPath(root, account.name))) {
+        const file = joinPath(root, account.name, org.name, `${local}.json`)
+        if (org.kind !== 'dir' || !(await $.fs.exists(file))) continue
+        const found = bridgeOf(await $.fs.read(file))
+        if (found.id && found.at > best.at) best = found
+      }
+    }
+  }
+  return best.id
+}
 
 /** Whether the desktop app's own session and sidebar tools answer the plugin on this machine. */
 const APP_SYNC_KEY = 'appSync'

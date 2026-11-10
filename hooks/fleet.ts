@@ -17,6 +17,34 @@ export type FleetRecord = {
   appliedTitle?: string
   /** The title the person gave the session, kept word for word: the plugin no longer puts its own title back. */
   userTitle?: string
+  /** What the session is doing now, so other machines (and LumenLite) can show the account's running and waiting sessions. */
+  live?: LiveRecord
+  /** The Remote Control session (session_…) that opens this one from any device: claude.ai/code/<id>. */
+  remoteSession?: string
+}
+
+/**
+ * working: a turn is running; waiting: the session stopped for the person (a permission prompt, a question, a plan to
+ * approve); idle: the turn ended.
+ */
+export type LiveState = 'working' | 'waiting' | 'idle'
+
+export type LiveRecord = { state: LiveState; at: string }
+
+/** How long a state change waits before it is pushed, so a burst of changes makes one commit. */
+export const livePushDelay = (state: LiveState) => (state === 'waiting' ? 3_000 : 20_000)
+
+/** The Remote Control session a desktop session file names last (its newest bridge), if any. */
+export function bridgeOf(json: string): { id?: string; at: number } {
+  try {
+    const data = JSON.parse(json) as { bridgeSessionIds?: unknown; lastActivityAt?: unknown }
+    const ids = Array.isArray(data.bridgeSessionIds)
+      ? data.bridgeSessionIds.filter((x): x is string => typeof x === 'string' && /^(session|cse)_[A-Za-z0-9_-]+$/.test(x))
+      : []
+    return { id: ids[ids.length - 1], at: typeof data.lastActivityAt === 'number' ? data.lastActivityAt : 0 }
+  } catch {
+    return { at: 0 }
+  }
 }
 
 /** Leads the prompts the plugin submits itself, so they never name a feature. */
