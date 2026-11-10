@@ -21,6 +21,8 @@ export type FleetRecord = {
   live?: LiveRecord
   /** The Remote Control session (session_…) that opens this one from any device: claude.ai/code/<id>. */
   remoteSession?: string
+  /** The computer's own name (COMPUTERNAME, or the hostname on macOS), which RustDesk shows for the machine. */
+  host?: string
 }
 
 /**

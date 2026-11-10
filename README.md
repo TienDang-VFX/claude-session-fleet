@@ -46,7 +46,7 @@ Registry mặc định là repo private `TienDang-VFX/claude-session-registry`, 
 
 Không dùng git thì chạy script với `-RegistryGit ""` (chỉ lưu ở máy đó) hoặc `-RegistryDir <folder dùng chung>`.
 
-**Trạng thái đang làm gì (từ 0.3.0):** mỗi file còn có `live` (`working` khi một lượt đang chạy, `waiting` khi phiên dừng chờ bạn: hỏi quyền, hỏi câu hỏi, chờ duyệt kế hoạch; `idle` khi lượt xong) và `remoteSession`, phiên Remote Control mở được phiên đó từ máy khác (`claude.ai/code/<id>`). Thay đổi trạng thái được ghi ngay vào file và đẩy lên sau vài giây (3 giây khi chờ bạn, 20 giây với các trạng thái khác), nên một loạt thay đổi gần nhau chỉ thành một commit. LumenLite đọc các trường này để hiện phiên đang chạy và đang chờ bạn của mọi máy.
+**Trạng thái đang làm gì (từ 0.3.0):** mỗi file còn có `live` (`working` khi một lượt đang chạy, `waiting` khi phiên dừng chờ bạn: hỏi quyền, hỏi câu hỏi, chờ duyệt kế hoạch; `idle` khi lượt xong) `remoteSession`, phiên Remote Control mở được phiên đó từ máy khác (`claude.ai/code/<id>`), và `host` (từ 0.3.1), tên máy tính như RustDesk hiển thị, để LumenLite mở thẳng màn hình máy đó. Thay đổi trạng thái được ghi ngay vào file và đẩy lên sau vài giây (3 giây khi chờ bạn, 20 giây với các trạng thái khác), nên một loạt thay đổi gần nhau chỉ thành một commit. LumenLite đọc các trường này để hiện phiên đang chạy và đang chờ bạn của mọi máy.
 
 ## Trong desktop app
 

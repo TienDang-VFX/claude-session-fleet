@@ -22,7 +22,7 @@ type $ = EngineInterface
 /** Tools that change files or run commands: denied outside the project folder. */
 const GUARDED = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit', 'Bash', 'PowerShell'])
 
-type Config = { machine: string; root: string; registry: string; enforce: boolean }
+type Config = { machine: string; host: string; root: string; registry: string; enforce: boolean }
 
 /** Module state; recomputed by session.start on every load or reload. */
 let config: Config | undefined
@@ -49,16 +49,19 @@ async function readConfig($: $, pluginOptions: PluginOptions): Promise<Config> {
       $.ui.toast(`session-fleet: ${file} is not valid JSON; using the plugin options.`)
     }
   }
-  let machine = str(options, 'machineName')
-  if (!machine) machine = ((await $.env.get('COMPUTERNAME')) ?? '').trim()
-  if (!machine) {
+  // The computer's own name, as RustDesk shows it, so another machine can open this one's screen.
+  let host = ((await $.env.get('COMPUTERNAME')) ?? '').trim()
+  if (!host) {
     const ran = await $.process.run(['hostname']).catch(() => undefined)
-    machine = ran?.stdout.trim().split('.')[0] ?? ''
+    host = ran?.stdout.trim() ?? ''
   }
+  let machine = str(options, 'machineName')
+  if (!machine) machine = host.split('.')[0]
   let registry = str(options, 'registryDir')
   if (!registry) registry = joinPath(home, '.claude', 'session-fleet-registry')
   return {
     machine: machine || 'unknown',
+    host,
     root: str(options, 'projectRoot'),
     registry,
     enforce: options.enforceFolder !== false,
@@ -374,6 +377,7 @@ async function setLive($: $, cfg: Config, state: LiveState) {
   rec.live = { state, at: new Date(await $.clock.now()).toISOString() }
   // Remote Control may connect after the first turn starts, and a reconnect opens a new bridge: look again until found,
   // and at each turn's end.
+  if (cfg.host) rec.host = cfg.host
   if (!rec.remoteSession || state === 'idle') {
     const bridge = await findBridge($).catch(() => undefined)
     if (bridge) rec.remoteSession = bridge

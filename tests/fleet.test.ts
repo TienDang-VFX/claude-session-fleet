@@ -274,7 +274,7 @@ test('done keeps the title the session already has, and the person reads no mode
 
 test('the registry follows what the session is doing, and names its Remote Control session', async ($, on) => {
   const files = new Map<string, string>()
-  const clock = fakeHost(on, files, 'D:\\Work\\game', { APPDATA: 'C:/home/AppData/Roaming' })
+  const clock = fakeHost(on, files, 'D:\\Work\\game', { APPDATA: 'C:/home/AppData/Roaming', COMPUTERNAME: 'DESKTOP-A4192P7' })
   files.set(
     'C:/home/AppData/Roaming/Claude/claude-code-sessions/acct/org/local_abc.json',
     JSON.stringify({ sessionId: 'local_abc', bridgeSessionIds: ['session_old', 'session_01New'], lastActivityAt: 5 }),
@@ -306,6 +306,8 @@ test('the registry follows what the session is doing, and names its Remote Contr
   await $.turn.start({ text: 'go', turnId: 't1' })
   expect(record().live?.state).toBe('working')
   expect(record().remoteSession).toBe('session_01New')
+  // The computer's name, as RustDesk shows it, opens this machine's screen from another.
+  expect(record().host).toBe('DESKTOP-A4192P7')
 
   await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [] } } as never)
   expect(duringQuestion).toBe('waiting')
