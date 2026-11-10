@@ -48,6 +48,22 @@ Không dùng git thì chạy script với `-RegistryGit ""` (chỉ lưu ở máy
 
 **Trạng thái đang làm gì (từ 0.3.0):** mỗi file còn có `live` (`working` khi một lượt đang chạy, `waiting` khi phiên dừng chờ bạn: hỏi quyền, hỏi câu hỏi, chờ duyệt kế hoạch; `idle` khi lượt xong) `remoteSession`, phiên Remote Control mở được phiên đó từ máy khác (`claude.ai/code/<id>`), và `host` (từ 0.3.1), tên máy tính như RustDesk hiển thị, để LumenLite mở thẳng màn hình máy đó. Thay đổi trạng thái được ghi ngay vào file. Chờ bạn và hết lượt được đẩy lên sau 1 giây; đang chạy thì sau 15 giây, nên một lượt bắt đầu rồi hỏi ngay chỉ thành một commit. Trạng thái nào chưa lên được registry (mất mạng, push lỗi) được đẩy lại mỗi phút. Các session trên cùng một máy chạy git lần lượt (khóa `.git/session-fleet.lock`), và một lần rebase bị bỏ dở được tự gỡ trước khi đồng bộ. LumenLite đọc các trường này để hiện phiên đang chạy và đang chờ bạn của mọi máy.
 
+## Codex
+
+`codex/fleet-hook.mjs` là hook của Codex ghi các thread Codex vào cùng registry (`"provider": "codex"`), để LumenLite hiện thread Codex của mọi máy và biết khi nào một thread chờ bạn:
+
+- Gửi prompt: đang chạy. Codex xin quyền (PermissionRequest): chờ bạn. Chạy công cụ sau khi được cho phép: đang chạy lại.
+- Hết lượt (Stop): chờ bạn nếu câu trả lời cuối có dòng `Needs you: …` khác `nothing`/`không`, hoặc (khi không có dòng đó) kết thúc bằng câu hỏi; còn lại là xong.
+- Bỏ qua `codex exec` và các subagent Codex tự chạy. Hook chỉ ghi file rồi trả về ngay; một tiến trình tách riêng đẩy lên git sau 1 giây (15 giây khi đang chạy), dùng chung khóa `.git/session-fleet.lock` với plugin.
+
+Cài trên một máy (giữ nguyên các hook Codex khác, có bản sao `hooks.json.bak-session-fleet`):
+
+```bash
+node ~/claude-session-fleet/codex/install-hooks.mjs
+```
+
+Gỡ: thêm `--remove`. Kiểm tra Codex gửi gì cho hook: đặt `SESSION_FLEET_HOOK_LOG=<file>`.
+
 ## Trong desktop app
 
 Desktop app không hiện các lệnh `/feature`, `/done`, `/sessions`, `/fleet`, nên plugin cung cấp thêm tool để Claude gọi. Bạn chỉ cần nói bằng lời:
