@@ -90,17 +90,34 @@ async function git($: $, cfg: Config, args: string[]) {
 
 const isGitRegistry = ($: $, cfg: Config) => $.fs.exists(joinPath(cfg.registry, '.git'))
 
-/** Commits this session's record and pushes it; serialized so syncs never overlap. Resolves true once pushed. */
+/**
+ * Commits this session's record and pushes it. Resolves true once pushed. Serialized within this session, and across
+ * the machine's sessions by a lock in the registry's .git folder: several sessions running git at once in one clone
+ * left a rebase half done, after which nothing from the machine reached the registry.
+ */
 function pushRecord($: $, cfg: Config, rec: FleetRecord): Promise<boolean> {
   const run = syncChain.then(async () => {
     if (!(await isGitRegistry($, cfg))) return true
-    const rel = `sessions/${cfg.machine}/${rec.sessionId}.json`
-    await git($, cfg, ['add', '--', rel])
-    await git($, cfg, ['commit', '-q', '-m', `${rec.machine}: ${rec.status} ${rec.feature || rec.sessionId}`, '--', rel])
-    await git($, cfg, ['pull', '-q', '--rebase', '--autostash'])
-    const pushed = await git($, cfg, ['push', '-q'])
-    if (pushed.exitCode !== 0) $.ui.toast(`session-fleet: push failed: ${pushed.stderr.trim().slice(0, 120)}`)
-    return pushed.exitCode === 0
+    return withRegistryLock($, cfg, async () => {
+      // A rebase another session left half done (crashed, or from before the lock) is undone first.
+      if ((await $.fs.exists(joinPath(cfg.registry, '.git', 'rebase-merge'))) || (await $.fs.exists(joinPath(cfg.registry, '.git', 'rebase-apply'))))
+        await git($, cfg, ['rebase', '--abort'])
+      const rel = `sessions/${cfg.machine}/${rec.sessionId}.json`
+      await git($, cfg, ['add', '--', rel])
+      await git($, cfg, ['commit', '-q', '-m', `${rec.machine}: ${rec.status} ${rec.feature || rec.sessionId}`, '--', rel])
+      // Another machine may push between the pull and the push: pull again and retry.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const pulled = await git($, cfg, ['pull', '-q', '--rebase', '--autostash'])
+        if (pulled.exitCode !== 0) {
+          await git($, cfg, ['rebase', '--abort'])
+          continue
+        }
+        const pushed = await git($, cfg, ['push', '-q'])
+        if (pushed.exitCode === 0) return true
+        if (attempt === 2) $.ui.toast(`session-fleet: push failed: ${pushed.stderr.trim().slice(0, 120)}`)
+      }
+      return false
+    })
   })
   const settled = run.catch(err => {
     $.ui.toast(`session-fleet: sync failed: ${String(err).slice(0, 120)}`)
@@ -108,6 +125,43 @@ function pushRecord($: $, cfg: Config, rec: FleetRecord): Promise<boolean> {
   })
   syncChain = settled
   return settled
+}
+
+/** A lock older than this is a session that died holding it. */
+const LOCK_STALE_MS = 2 * 60_000
+
+/**
+ * Runs `work` while this session holds the registry lock, a small file in .git naming its holder: written, then read
+ * back after a moment to see that no other session wrote over it. Gives up (false) after about half a minute.
+ */
+async function withRegistryLock($: $, cfg: Config, work: () => Promise<boolean>): Promise<boolean> {
+  const file = joinPath(cfg.registry, '.git', 'session-fleet.lock')
+  const me = `${await $.session.id()}:${Math.random().toString(36).slice(2)}`
+  const holder = async () => {
+    try {
+      return JSON.parse(await $.fs.read(file)) as { owner?: string; at?: number }
+    } catch {
+      return {}
+    }
+  }
+  let held = false
+  for (let tries = 0; tries < 30 && !held; tries++) {
+    const now = await $.clock.now()
+    const other = (await $.fs.exists(file)) ? await holder() : {}
+    if (other.owner && other.owner !== me && now - (other.at ?? 0) < LOCK_STALE_MS) {
+      await $.clock.sleep(1_000)
+      continue
+    }
+    await $.fs.write(file, JSON.stringify({ owner: me, at: now }))
+    await $.clock.sleep(150)
+    held = (await holder()).owner === me
+  }
+  if (!held) return false
+  try {
+    return await work()
+  } finally {
+    await $.fs.write(file, '{}')
+  }
 }
 
 async function saveRecord($: $, cfg: Config, rec: FleetRecord, { sync = true } = {}) {

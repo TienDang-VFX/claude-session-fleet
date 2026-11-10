@@ -353,8 +353,11 @@ test('a wait that failed to reach the registry is pushed again, and the turn end
   // The turn ends: pushed within a second, not after a long delay.
   const before = pushes.length
   await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
-  await clock.advance(1_000)
-  await clock.settle()
+  // A second for the delay, then the registry lock's short check.
+  for (let step = 0; step < 4; step++) {
+    await clock.advance(500)
+    await clock.settle()
+  }
   expect(pushes.length).toBeGreaterThan(before)
   expect(JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}').live?.state).toBe('idle')
 })
@@ -391,4 +394,36 @@ test('a Remote Control call the app never answers neither stops the group move n
   await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' } as never)
   await clock.settle()
   expect(calls.filter(t => t === 'mcp__ccd_session_mgmt__get_session').length).toBeGreaterThan(gets)
+})
+
+test('a sync waits while another session of the machine holds the registry lock, and undoes a half-done rebase', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set('R:/reg/.git/HEAD', 'ref: refs/heads/main')
+  files.set('R:/reg/.git/rebase-merge/autostash', 'abc')
+  // Another session holds the lock right now.
+  files.set('R:/reg/.git/session-fleet.lock', JSON.stringify({ owner: 'other-session', at: Date.parse('2026-10-17T00:00:00.000Z') }))
+  const ran: string[] = []
+  const clock = fakeHost(on, files, 'D:\Work\game', {}, argv => {
+    if (argv[0] === 'git') ran.push(argv[1])
+    return 0
+  })
+  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('classic.SessionStart', () => ({}))
+  await $.session.start({ cwd: 'D:\Work\game', surface: 'desktop', isInteractive: true })
+  await $.classic.SessionStart({ source: 'startup', session_id: 'sess-1', cwd: 'D:\Work\game' })
+  await clock.advance(3_000)
+  await clock.settle()
+  expect(ran).toEqual([])
+
+  // The other session lets go: this one goes on, undoing the half-done rebase first.
+  files.set('R:/reg/.git/session-fleet.lock', '{}')
+  files.delete('R:/reg/.git/rebase-merge/autostash')
+  files.set('R:/reg/.git/rebase-merge/x', '')
+  for (let step = 0; step < 6; step++) {
+    await clock.advance(500)
+    await clock.settle()
+  }
+  expect(ran[0]).toBe('rebase')
+  expect(ran).toContain('push')
+  expect(files.get('R:/reg/.git/session-fleet.lock')).toBe('{}')
 })
