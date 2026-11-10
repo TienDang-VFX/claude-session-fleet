@@ -464,10 +464,22 @@ const APP = {
 
 const isDesktop = async ($: $) => ((await $.session.surfaces().catch(() => [])) as readonly string[]).includes('desktop')
 
+/** How long one call to the app may take before syncApp goes on without it. */
+const APP_CALL_TIMEOUT_MS = 20_000
+
 /** Calls one of the desktop app's tools; the answer's text, or undefined when it is missing or refused. */
 async function callApp($: $, tool: string, args: Record<string, unknown>): Promise<string | undefined> {
-  const ran = await $.tool.call({ tool, ...args } as never).catch(() => undefined)
-  if (!ran || ran.deny !== undefined || ran.isError) return undefined
+  // A call the app never answers would hold syncApp's lock for good, and no later sync would file or title the session.
+  const timedOut = new Promise<'timeout'>(resolve => $.clock.after(APP_CALL_TIMEOUT_MS, () => resolve('timeout')))
+  const ran = await Promise.race([$.tool.call({ tool, ...args } as never).catch(() => undefined), timedOut])
+  if (ran === 'timeout') {
+    $.ui.log(`session-fleet: ${tool} did not answer in ${APP_CALL_TIMEOUT_MS / 1000}s`, { to: 'debug' })
+    return undefined
+  }
+  if (!ran || ran.deny !== undefined || ran.isError) {
+    $.ui.log(`session-fleet: ${tool} refused: ${String(ran?.deny ?? ran?.text ?? 'no answer').slice(0, 160)}`, { to: 'debug' })
+    return undefined
+  }
   if (typeof ran.text === 'string') return ran.text
   return typeof ran.result === 'string' ? ran.result : JSON.stringify(ran.result)
 }
@@ -509,6 +521,21 @@ async function syncApp($: $, cfg: Config) {
     // feature under the machine prefix (see adoptTitle).
     const current = info.title ?? ''
     if (adoptTitle(rec, current)) await saveRecord($, cfg, rec)
+    // The sidebar group first: the title step below reconnects Remote Control, the call most likely to stall.
+    const want = rec.status === 'done' ? 'Done' : cfg.machine
+    if (info.group?.name !== want) {
+      const groups = (parseJson(await callApp($, APP.groups, {})) as { id: string; name: string }[] | undefined) ?? []
+      let id = groups.find(g => g.name === want)?.id
+      if (!id) id = (await callApp($, APP.create, { name: want }))?.match(/cg-[0-9a-f-]+/)?.[0]
+      if (id) await callApp($, APP.move, { session_ids: ['self'], group_id: id })
+    }
+    if (rec.status === 'done' && !rec.isMarkedCompleted) {
+      if ((await callApp($, APP.completed, { session_id: 'self' })) !== undefined) {
+        rec.isMarkedCompleted = true
+        await saveRecord($, cfg, rec, { sync: false })
+      }
+    }
+
     const title = titleOf(rec)
     // A session already showing the plugin's title (one from before appliedTitle was kept) is marked as titled, so a
     // later rename counts as the person's.
@@ -528,20 +555,6 @@ async function syncApp($: $, cfg: Config) {
 
     // The app drops Remote Control from a session that went idle; an open session takes it back.
     if (info.remoteControlState === 'off') await callApp($, APP.remote, { session_id: 'self', enabled: true })
-
-    const want = rec.status === 'done' ? 'Done' : cfg.machine
-    if (info.group?.name !== want) {
-      const groups = (parseJson(await callApp($, APP.groups, {})) as { id: string; name: string }[] | undefined) ?? []
-      let id = groups.find(g => g.name === want)?.id
-      if (!id) id = (await callApp($, APP.create, { name: want }))?.match(/cg-[0-9a-f-]+/)?.[0]
-      if (id) await callApp($, APP.move, { session_ids: ['self'], group_id: id })
-    }
-    if (rec.status === 'done' && !rec.isMarkedCompleted) {
-      if ((await callApp($, APP.completed, { session_id: 'self' })) !== undefined) {
-        rec.isMarkedCompleted = true
-        await saveRecord($, cfg, rec, { sync: false })
-      }
-    }
   } finally {
     isSyncing = false
   }

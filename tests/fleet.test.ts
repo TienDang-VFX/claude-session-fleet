@@ -120,6 +120,7 @@ function fakeHost(on: On, files: Map<string, string>, cwd: string, env: Record<s
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('ui.status', () => ({ value: undefined }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
+  on('ui.log', () => ({ value: undefined }) as never)
   on('tool.register', () => ({ value: { tool: '' } }) as never)
   return clock
 }
@@ -356,4 +357,38 @@ test('a wait that failed to reach the registry is pushed again, and the turn end
   await clock.settle()
   expect(pushes.length).toBeGreaterThan(before)
   expect(JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}').live?.state).toBe('idle')
+})
+
+test('a Remote Control call the app never answers neither stops the group move nor later syncs', async ($, on) => {
+  const files = new Map<string, string>()
+  const clock = fakeHost(on, files, 'D:\Work\game')
+  const calls: string[] = []
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string }
+    calls.push(call.tool)
+    const info = '{"title":"Fresh app title","group":null,"remoteControlState":"on"}'
+    if (call.tool === 'mcp__ccd_session_mgmt__get_session') return { result: info, text: info }
+    if (call.tool === 'mcp__ccd_sidebar__list_groups') return { result: '[{"id":"cg-9","name":"3090"}]', text: '[{"id":"cg-9","name":"3090"}]' }
+    if (call.tool === 'mcp__ccd_session_mgmt__set_remote_control') return new Promise(() => {}) as never
+    return { result: 'ok', text: 'ok' }
+  })
+  on('classic.SessionStart', () => ({}))
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: 'D:\Work\game', surface: 'desktop', isInteractive: true })
+  await $.classic.SessionStart({ source: 'startup', session_id: 'sess-1', cwd: 'D:\Work\game' })
+
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.settle()
+  expect(calls).toContain('mcp__ccd_sidebar__move_sessions')
+  expect(calls.indexOf('mcp__ccd_sidebar__move_sessions')).toBeLessThan(calls.indexOf('mcp__ccd_session_mgmt__set_remote_control'))
+
+  // Both hung Remote Control calls (off, then on) time out, and the next turn's sync runs.
+  await clock.advance(25_000)
+  await clock.settle()
+  await clock.advance(25_000)
+  await clock.settle()
+  const gets = calls.filter(t => t === 'mcp__ccd_session_mgmt__get_session').length
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' } as never)
+  await clock.settle()
+  expect(calls.filter(t => t === 'mcp__ccd_session_mgmt__get_session').length).toBeGreaterThan(gets)
 })
