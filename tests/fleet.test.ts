@@ -96,7 +96,7 @@ describe('helpers', () => {
 const slash = (p: string) => p.replace(/\\/g, '/')
 
 /** An in-memory disk, a session and a quiet host beneath the plugin. */
-function fakeHost(on: On, files: Map<string, string>, cwd: string, env: Record<string, string> = {}) {
+function fakeHost(on: On, files: Map<string, string>, cwd: string, env: Record<string, string> = {}, run: (args: readonly string[]) => number = () => 1) {
   mock.store(on)
   mock.env(on, { USERPROFILE: 'C:/home', ...env })
   files.set('C:/home/.claude/session-fleet.json', JSON.stringify(CONFIG))
@@ -111,7 +111,7 @@ function fakeHost(on: On, files: Map<string, string>, cwd: string, env: Record<s
     const text = files.get(slash(e.path))
     return text === undefined ? { deny: `missing ${e.path}` } : { value: text }
   })
-  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', ($, e) => ({ value: { exitCode: run(e.argv), stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('settings.read', () => ({ value: {} }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.cwd', () => ({ value: cwd }))
@@ -316,4 +316,44 @@ test('the registry follows what the session is doing, and names its Remote Contr
   await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
   await clock.settle()
   expect(record().live?.state).toBe('idle')
+})
+
+test('a wait that failed to reach the registry is pushed again, and the turn end goes out at once', async ($, on) => {
+  const files = new Map<string, string>()
+  files.set('R:/reg/.git/HEAD', 'ref: refs/heads/main')
+  let online = false
+  const pushes: boolean[] = []
+  const clock = fakeHost(on, files, 'D:\Work\game', {}, args => {
+    if (args[0] !== 'git' || args[1] !== 'push') return 0
+    pushes.push(online)
+    return online ? 0 : 1
+  })
+  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('classic.SessionStart', () => ({}))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }) as never)
+  on('turn.complete', () => ({ text: '' }))
+  on('classic.Notification', () => ({}) as never)
+  await $.session.start({ cwd: 'D:\Work\game', surface: 'desktop', isInteractive: true })
+  await $.classic.SessionStart({ source: 'startup', session_id: 'sess-1', cwd: 'D:\Work\game' })
+
+  await $.classic.Notification({ session_id: 'sess-1', cwd: 'D:\Work\game', message: 'Claude needs your permission', notification_type: 'permission_prompt' } as never)
+  await clock.advance(1_000)
+  await clock.settle()
+  // Offline: the start and the wait were tried and failed.
+  expect(pushes.length).toBeGreaterThan(0)
+  expect(pushes.every(ok => !ok)).toBe(true)
+
+  // The network is back: the retry pushes the wait.
+  online = true
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(pushes.at(-1)).toBe(true)
+
+  // The turn ends: pushed within a second, not after a long delay.
+  const before = pushes.length
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.advance(1_000)
+  await clock.settle()
+  expect(pushes.length).toBeGreaterThan(before)
+  expect(JSON.parse(files.get('R:/reg/sessions/3090/sess-1.json') ?? '{}').live?.state).toBe('idle')
 })

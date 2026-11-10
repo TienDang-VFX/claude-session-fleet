@@ -5,6 +5,7 @@ import {
   type LiveState,
   bridgeOf,
   livePushDelay,
+  LIVE_RETRY_MS,
   FIRST_PROMPT_MARK,
   featureFromText,
   featureFromTitle,
@@ -89,20 +90,24 @@ async function git($: $, cfg: Config, args: string[]) {
 
 const isGitRegistry = ($: $, cfg: Config) => $.fs.exists(joinPath(cfg.registry, '.git'))
 
-/** Commits this session's record and pushes it; serialized so syncs never overlap. */
-function pushRecord($: $, cfg: Config, rec: FleetRecord) {
-  syncChain = syncChain
-    .then(async () => {
-      if (!(await isGitRegistry($, cfg))) return
-      const rel = `sessions/${cfg.machine}/${rec.sessionId}.json`
-      await git($, cfg, ['add', '--', rel])
-      await git($, cfg, ['commit', '-q', '-m', `${rec.machine}: ${rec.status} ${rec.feature || rec.sessionId}`, '--', rel])
-      await git($, cfg, ['pull', '-q', '--rebase', '--autostash'])
-      const pushed = await git($, cfg, ['push', '-q'])
-      if (pushed.exitCode !== 0) $.ui.toast(`session-fleet: push failed: ${pushed.stderr.trim().slice(0, 120)}`)
-    })
-    .catch(err => $.ui.toast(`session-fleet: sync failed: ${String(err).slice(0, 120)}`))
-  return syncChain
+/** Commits this session's record and pushes it; serialized so syncs never overlap. Resolves true once pushed. */
+function pushRecord($: $, cfg: Config, rec: FleetRecord): Promise<boolean> {
+  const run = syncChain.then(async () => {
+    if (!(await isGitRegistry($, cfg))) return true
+    const rel = `sessions/${cfg.machine}/${rec.sessionId}.json`
+    await git($, cfg, ['add', '--', rel])
+    await git($, cfg, ['commit', '-q', '-m', `${rec.machine}: ${rec.status} ${rec.feature || rec.sessionId}`, '--', rel])
+    await git($, cfg, ['pull', '-q', '--rebase', '--autostash'])
+    const pushed = await git($, cfg, ['push', '-q'])
+    if (pushed.exitCode !== 0) $.ui.toast(`session-fleet: push failed: ${pushed.stderr.trim().slice(0, 120)}`)
+    return pushed.exitCode === 0
+  })
+  const settled = run.catch(err => {
+    $.ui.toast(`session-fleet: sync failed: ${String(err).slice(0, 120)}`)
+    return false
+  })
+  syncChain = settled
+  return settled
 }
 
 async function saveRecord($: $, cfg: Config, rec: FleetRecord, { sync = true } = {}) {
@@ -202,6 +207,8 @@ export const register: Register = (on, options) => {
     if (rec) showStatus($, rec)
     // A long turn ends late, and the app may retitle a session at any time: keep it in line while it is open.
     $.clock.every(SYNC_EVERY_MS, () => void syncApp($, cfg))
+    // A state that never reached the registry is pushed again, so other machines do not keep an old wait.
+    $.clock.every(LIVE_RETRY_MS, () => void pushLive($, cfg))
     return next(e)
   })
 
@@ -364,6 +371,8 @@ const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode'])
 /** The live state last written for this session, and the push it waits for (only the newest goes). */
 let liveState: LiveState | undefined
 let livePush = 0
+/** The last live state the registry has from this session. */
+let livePushed: LiveState | undefined
 
 /**
  * Records what the session is doing in the registry: written at once, pushed a little later so a burst of changes (a
@@ -385,10 +394,16 @@ async function setLive($: $, cfg: Config, state: LiveState) {
   await saveRecord($, cfg, rec, { sync: false })
   const mine = ++livePush
   $.clock.after(livePushDelay(state), async () => {
-    if (mine !== livePush) return
-    const latest = await loadRecord($, cfg, rec.sessionId)
-    if (latest) await pushRecord($, cfg, latest)
+    if (mine === livePush) await pushLive($, cfg)
   })
+}
+
+/** Pushes this session's record when the registry does not have its live state yet. */
+async function pushLive($: $, cfg: Config) {
+  const state = liveState
+  if (!state || state === livePushed) return
+  const latest = await loadRecord($, cfg, await $.session.id())
+  if (latest && (await pushRecord($, cfg, latest))) livePushed = state
 }
 
 /**

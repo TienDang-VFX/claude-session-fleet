@@ -34,7 +34,12 @@ export type LiveState = 'working' | 'waiting' | 'idle'
 export type LiveRecord = { state: LiveState; at: string }
 
 /** How long a state change waits before it is pushed, so a burst of changes makes one commit. */
-export const livePushDelay = (state: LiveState) => (state === 'waiting' ? 3_000 : 20_000)
+// A wait and a turn's end are what other machines act on: they go out at once. A working state waits a little, so a
+// turn that starts, asks and goes on makes one commit.
+export const livePushDelay = (state: LiveState) => (state === 'working' ? 15_000 : 1_000)
+
+/** How often a state that did not reach the registry (a failed push, a timer that never ran) is pushed again. */
+export const LIVE_RETRY_MS = 60_000
 
 /** The Remote Control session a desktop session file names last (its newest bridge), if any. */
 export function bridgeOf(json: string): { id?: string; at: number } {
