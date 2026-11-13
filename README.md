@@ -48,6 +48,18 @@ Không dùng git thì chạy script với `-RegistryGit ""` (chỉ lưu ở máy
 
 **Trạng thái đang làm gì (từ 0.3.0):** mỗi file còn có `live` (`working` khi một lượt đang chạy, `waiting` khi phiên dừng chờ bạn: hỏi quyền, hỏi câu hỏi, chờ duyệt kế hoạch; `idle` khi lượt xong) `remoteSession`, phiên Remote Control mở được phiên đó từ máy khác (`claude.ai/code/<id>`), và `host` (từ 0.3.1), tên máy tính như RustDesk hiển thị, để LumenLite mở thẳng màn hình máy đó. Thay đổi trạng thái được ghi ngay vào file. Chờ bạn và hết lượt được đẩy lên sau 1 giây; đang chạy thì sau 15 giây, nên một lượt bắt đầu rồi hỏi ngay chỉ thành một commit. Trạng thái nào chưa lên được registry (mất mạng, push lỗi) được đẩy lại mỗi phút. Các session trên cùng một máy chạy git lần lượt (khóa `.git/session-fleet.lock`), và một lần rebase bị bỏ dở được tự gỡ trước khi đồng bộ. LumenLite đọc các trường này để hiện phiên đang chạy và đang chờ bạn của mọi máy.
 
+## Giữ session khi đổi tài khoản Claude (desktop app)
+
+App Claude lưu danh sách session Code riêng cho từng tài khoản, nên khi đổi tài khoản thì các session cũ không hiện ra. `session-sync/claude-session-sync.ps1` chép danh sách đó sang mọi tài khoản trên cùng một máy: mỗi session lấy bản mới nhất, và session xóa ở một tài khoản (`deleted_*`) cũng bị xóa ở các tài khoản còn lại. Script không dùng junction, vì app từ chối ghi vào folder là junction. Đây không phải tính năng chính thức của Claude: sau khi cập nhật app, chạy `-Status` để kiểm tra script còn tìm đúng folder.
+
+Chỉ dành cho Windows. Cài cho máy, chạy mỗi 5 giờ và chạy ẩn:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ~/claude-session-fleet/session-sync/claude-session-sync.ps1 -Install
+```
+
+Nếu script không tự tìm thấy folder session, thêm `-Root "<...>\claude-code-sessions"`. Các tham số khác: `-Status` xem các folder và số session, `-WhatIf` chạy thử không ghi gì, `-Uninstall` gỡ tác vụ. Tác vụ chạy thẳng file trong repo, nên sau khi `git pull`, lần chạy kế tiếp dùng bản mới.
+
 ## Codex
 
 `codex/fleet-hook.mjs` là hook của Codex ghi các thread Codex vào cùng registry (`"provider": "codex"`), để LumenLite hiện thread Codex của mọi máy và biết khi nào một thread chờ bạn:
